@@ -24,7 +24,10 @@ class ProjectManager {
       e.stopPropagation();
       this.toggleDropdown();
     });
-    document.addEventListener('click', () => this.closeDropdown());
+    document.addEventListener('click', () => {
+      this.closeDropdown();
+      this.closeStatusDropdown();
+    });
     document.getElementById('add-issue-btn').addEventListener('click', () => this.openAddIssueModal());
     document.getElementById('close-add-issue-btn').addEventListener('click', () => this.closeAddIssueModal());
     document.getElementById('cancel-add-issue-btn').addEventListener('click', () => this.closeAddIssueModal());
@@ -60,8 +63,6 @@ class ProjectManager {
     document.getElementById('issue-detail-toggle-btn').addEventListener('click', () => this.toggleIssueState());
     document.getElementById('issue-detail-delete-btn').addEventListener('click', () => this.openDeleteIssueModal());
     document.getElementById('issue-comment-submit-btn').addEventListener('click', () => this.submitComment());
-    document.getElementById('issue-status-select').addEventListener('change', (e) => this.updateLocalStatus(e.target.value));
-    document.getElementById('copy-branch-btn').addEventListener('click', () => this.copyBranchName());
     document.getElementById('close-delete-issue-btn').addEventListener('click', () => this.closeDeleteIssueModal());
     document.getElementById('cancel-delete-issue-btn').addEventListener('click', () => this.closeDeleteIssueModal());
     document.getElementById('confirm-delete-issue-btn').addEventListener('click', () => this.confirmDeleteIssue());
@@ -70,12 +71,34 @@ class ProjectManager {
         this.closeDeleteIssueModal();
       }
     });
+    document.getElementById('issue-title-edit-btn').addEventListener('click', () => this.enterTitleEditMode());
+    document.getElementById('issue-title-save-btn').addEventListener('click', () => this.saveTitleEdit());
+    document.getElementById('issue-title-cancel-btn').addEventListener('click', () => this.cancelTitleEditMode());
+    document.getElementById('issue-title-edit-input').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        this.saveTitleEdit();
+      } else if (e.key === 'Escape') {
+        this.cancelTitleEditMode();
+      }
+    });
+    document.getElementById('issue-body-edit-btn').addEventListener('click', () => this.enterBodyEditMode());
+    document.getElementById('issue-body-save-btn').addEventListener('click', () => this.saveIssueBody());
+    document.getElementById('issue-body-cancel-btn').addEventListener('click', () => this.cancelBodyEditMode());
     document.getElementById('close-init-issue-btn').addEventListener('click', () => this.closeInitIssueModal());
     document.getElementById('cancel-init-issue-btn').addEventListener('click', () => this.closeInitIssueModal());
     document.getElementById('confirm-init-issue-btn').addEventListener('click', () => this.confirmInitIssue());
     document.getElementById('init-issue-modal').addEventListener('click', (e) => {
       if (e.target === e.currentTarget) {
         this.closeInitIssueModal();
+      }
+    });
+    document.getElementById('issue-link-branch-save-btn').addEventListener('click', () => this.saveBranchLink());
+    document.getElementById('issue-link-branch-cancel-btn').addEventListener('click', () => this.closeLinkBranchForm());
+    document.getElementById('issue-link-branch-input').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        this.saveBranchLink();
+      } else if (e.key === 'Escape') {
+        this.closeLinkBranchForm();
       }
     });
   }
@@ -156,6 +179,24 @@ class ProjectManager {
   closeDropdown() {
     document.getElementById('project-dropdown-menu').classList.remove('open');
   }
+  // 關閉狀態下拉選單
+  closeStatusDropdown() {
+    const menu = document.getElementById('issue-status-dropdown-menu');
+    if (menu) {
+      menu.style.display = 'none';
+    }
+  }
+  // 回傳對應 status 的燈號 CSS class
+  statusDotClass(status) {
+    const map = {
+      todo: 'dot-todo',
+      process: 'dot-process',
+      review: 'dot-review',
+      done: 'dot-done',
+      closed: 'dot-closed'
+    };
+    return map[status] || 'dot-closed';
+  }
   // 切換目前使用的專案
   async selectProject(projectId) {
     this.activeProjectId = projectId;
@@ -218,10 +259,8 @@ class ProjectManager {
           '此專案的初始化 issue，自動建立。',
           ['init']
         );
-        await this.github.updateIssue(project.owner, project.repo, issue.number, { state: 'closed' });
         await this.storage.saveIssue({
           ...issue,
-          state: 'closed',
           id: `${project.id}_${issue.id}`,
           projectId: project.id,
           branchName: null,
@@ -415,10 +454,28 @@ class ProjectManager {
     const map = {
       todo: ['Todo', 'todo'],
       process: ['In Progress', 'process'],
-      review: ['Review', 'review'],
+      review: ['In Review', 'review'],
       done: ['Done', 'done']
     };
     return map[status] || null;
+  }
+  // 將 issue labels 轉換為類型 badge HTML
+  typeBadge(labels) {
+    const names = labels.map(l => l.name);
+    const typeMap = {
+      init: ['init', 'init'],
+      bug: ['bug', 'bug'],
+      feature: ['feature', 'feature']
+    };
+    for (const [key, [label, cls]] of Object.entries(typeMap)) {
+      if (names.includes(key)) {
+        return `<span class="status-badge status-${cls}">${label}</span>`;
+      }
+    }
+    if (names.length > 0) {
+      return `<span class="status-badge status-label">${names[0].toLowerCase()}</span>`;
+    }
+    return '';
   }
   // 在 issues-container 顯示空狀態提示
   showEmptyState(message) {
@@ -439,22 +496,31 @@ class ProjectManager {
         return;
       }
       const columns = [
-        { key: 'init', label: 'Init' },
-        { key: 'bug', label: 'Bug' },
-        { key: 'feature', label: 'Feature' }
+        { key: 'todo', label: 'Todo' },
+        { key: 'process', label: 'In Progress' },
+        { key: 'review', label: 'In Review' },
+        { key: 'done', label: 'Done' },
+        { key: 'closed', label: 'Closed' }
       ];
-      const grouped = { init: [], bug: [], feature: [], other: [] };
+      const grouped = { todo: [], process: [], review: [], done: [], closed: [], other: [] };
       issues.forEach(issue => {
-        const labelNames = issue.labels.map(l => l.name);
-        const matched = columns.find(c => labelNames.includes(c.key));
-        grouped[matched ? matched.key : 'other'].push(issue);
+        if (issue.state === 'closed') {
+          grouped.closed.push(issue);
+        } else {
+          const key = issue.status && grouped[issue.status] !== undefined ? issue.status : 'other';
+          grouped[key].push(issue);
+        }
       });
       const hasOther = grouped.other.length > 0;
-      const allColumns = hasOther ? [...columns, { key: 'other', label: '其他' }] : columns;
+      const allColumns = hasOther ? [...columns, { key: 'other', label: '未分類' }] : columns;
+      const colDotClass = { todo: 'dot-todo', process: 'dot-process', review: 'dot-review', done: 'dot-done', closed: 'dot-closed', other: 'dot-closed' };
       container.innerHTML = `<div class="issues-grid">` +
         allColumns.map(col => `<div class="issues-column">
           <div class="issues-column-header">
-            <span>${col.label}</span>
+            <span style="display: flex; align-items: center; gap: 6px;">
+              <span class="status-dot ${colDotClass[col.key] || 'dot-closed'}"></span>
+              <span>${col.label}</span>
+            </span>
             <span class="issues-column-count">${grouped[col.key].length}</span>
           </div>
           <div>${grouped[col.key].length === 0
@@ -472,10 +538,7 @@ class ProjectManager {
   }
   // 產生單一 issue 卡片的 HTML 字串
   createIssueElement(issue) {
-    const sd = issue.status ? this.statusDisplay(issue.status) : null;
-    const badge = sd
-      ? `<span class="status-badge status-${sd[1]}">${sd[0]}</span>`
-      : `<span style="font-size: 11px; color: var(--text-muted);">${issue.state === 'open' ? '開啟' : '關閉'}</span>`;
+    const badge = this.typeBadge(issue.labels);
     return `<div class="issue-item" data-issue-number="${issue.number}">
       <div class="issue-title">#${issue.number} ${issue.title}</div>
       <div class="issue-meta">${badge}</div>
@@ -495,19 +558,39 @@ class ProjectManager {
     document.getElementById('issue-detail-body').textContent = '';
     document.getElementById('issue-detail-comments').innerHTML = '';
     document.getElementById('issue-comment-input').value = '';
-    document.getElementById('issue-branch-display').textContent = '';
     document.getElementById('issue-detail-modal').classList.add('open');
     try {
       const cached = await this.storage.getIssuesByProject(this.activeProjectId);
       const cachedIssue = cached.find(i => i.number === issueNumber);
-      const [issue, comments] = await Promise.all([
+      const requests = [
         this.github.getIssue(project.owner, project.repo, issueNumber),
         this.github.getIssueComments(project.owner, project.repo, issueNumber)
-      ]);
+      ];
+      if (cachedIssue?.branchName) {
+        requests.push(this.github.getPullRequests(project.owner, project.repo));
+      }
+      const [issue, comments, prs] = await Promise.all(requests);
+      let status = cachedIssue?.status || null;
+      let needsRerender = false;
+      if (cachedIssue && cachedIssue.state !== issue.state) {
+        await this.storage.patchIssue(cachedIssue.id, { state: issue.state });
+        needsRerender = true;
+      }
+      if (prs && cachedIssue?.branchName) {
+        const autoStatus = this.computeIssueStatus(cachedIssue.branchName, prs);
+        if (autoStatus !== null && autoStatus !== status) {
+          status = autoStatus;
+          await this.storage.patchIssue(cachedIssue.id, { status });
+          needsRerender = true;
+        }
+      }
+      if (needsRerender) {
+        await this.renderIssues();
+      }
       const merged = {
         ...issue,
         branchName: cachedIssue?.branchName || null,
-        status: cachedIssue?.status || null,
+        status,
         id: cachedIssue?.id || issue.id
       };
       this._detailIssue = merged;
@@ -516,21 +599,164 @@ class ProjectManager {
       document.getElementById('issue-detail-title').textContent = '載入失敗: ' + error.message;
     }
   }
+  // 切換標題到編輯模式
+  enterTitleEditMode() {
+    if (!this._detailIssue) {
+      return;
+    }
+    document.getElementById('issue-detail-title').style.display = 'none';
+    document.getElementById('issue-title-edit-btn').style.display = 'none';
+    const input = document.getElementById('issue-title-edit-input');
+    input.value = this._detailIssue.title || '';
+    input.style.display = '';
+    document.getElementById('issue-title-save-btn').style.display = '';
+    document.getElementById('issue-title-cancel-btn').style.display = '';
+    input.focus();
+    input.select();
+  }
+  // 取消標題編輯
+  cancelTitleEditMode() {
+    document.getElementById('issue-detail-title').style.display = '';
+    document.getElementById('issue-title-edit-btn').style.display = '';
+    document.getElementById('issue-title-edit-input').style.display = 'none';
+    document.getElementById('issue-title-save-btn').style.display = 'none';
+    document.getElementById('issue-title-cancel-btn').style.display = 'none';
+  }
+  // 儲存編輯後的標題到 GitHub
+  async saveTitleEdit() {
+    if (!this._detailIssue || !this._detailProject || !this.github) {
+      return;
+    }
+    const newTitle = document.getElementById('issue-title-edit-input').value.trim();
+    if (!newTitle) {
+      return;
+    }
+    const btn = document.getElementById('issue-title-save-btn');
+    btn.disabled = true;
+    btn.textContent = '儲存中...';
+    try {
+      await this.github.updateIssue(
+        this._detailProject.owner, this._detailProject.repo,
+        this._detailIssue.number, { title: newTitle }
+      );
+      this._detailIssue.title = newTitle;
+      await this.storage.patchIssue(this._detailIssue.id, { title: newTitle });
+      document.getElementById('issue-detail-title').textContent =
+        `#${this._detailIssue.number} ${newTitle}`;
+      this.cancelTitleEditMode();
+      await this.renderIssues();
+    } catch (error) {
+      this.showMessage('儲存失敗: ' + error.message, 'error');
+    }
+    btn.disabled = false;
+    btn.textContent = '儲存';
+  }
+  // 切換說明到編輯模式
+  enterBodyEditMode() {
+    if (!this._detailIssue) {
+      return;
+    }
+    document.getElementById('issue-detail-body').style.display = 'none';
+    document.getElementById('issue-body-edit-btn').style.display = 'none';
+    const textarea = document.getElementById('issue-body-edit-input');
+    textarea.value = this._detailIssue.body || '';
+    textarea.style.display = '';
+    document.getElementById('issue-body-edit-actions').style.display = 'flex';
+    textarea.focus();
+  }
+  // 取消說明編輯
+  cancelBodyEditMode() {
+    document.getElementById('issue-detail-body').style.display = '';
+    document.getElementById('issue-body-edit-btn').style.display = '';
+    document.getElementById('issue-body-edit-input').style.display = 'none';
+    document.getElementById('issue-body-edit-actions').style.display = 'none';
+  }
+  // 儲存編輯後的說明到 GitHub
+  async saveIssueBody() {
+    if (!this._detailIssue || !this._detailProject || !this.github) {
+      return;
+    }
+    const newBody = document.getElementById('issue-body-edit-input').value.trim();
+    const btn = document.getElementById('issue-body-save-btn');
+    btn.disabled = true;
+    btn.textContent = '儲存中...';
+    try {
+      await this.github.updateIssue(
+        this._detailProject.owner, this._detailProject.repo,
+        this._detailIssue.number, { body: newBody }
+      );
+      this._detailIssue.body = newBody;
+      await this.storage.patchIssue(this._detailIssue.id, { body: newBody });
+      document.getElementById('issue-detail-body').textContent = newBody || '（無說明）';
+      this.cancelBodyEditMode();
+    } catch (error) {
+      this.showMessage('儲存失敗: ' + error.message, 'error');
+    }
+    btn.disabled = false;
+    btn.textContent = '儲存';
+  }
   // 將 issue 資料與留言填入詳情 modal
   renderIssueDetail(issue, comments) {
+    this._detailComments = comments;
+    this.cancelTitleEditMode();
+    this.cancelBodyEditMode();
+    this.closeLinkBranchForm();
     const labels = issue.labels.map(l => `<span class="issue-label">${l.name}</span>`).join('');
     const state = issue.state === 'open' ? '開啟' : '關閉';
     document.getElementById('issue-detail-title').textContent = `#${issue.number} ${issue.title}`;
-    document.getElementById('issue-detail-meta').innerHTML =
-      `${labels}<span style="font-size: 12px; color: var(--text-secondary);">狀態: ${state}</span>`;
+    const iconClipboard = `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>`;
+    const iconBranch = `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="15"></line><circle cx="18" cy="6" r="3"></circle><circle cx="6" cy="18" r="3"></circle><path d="M18 9a9 9 0 0 1-9 9"></path></svg>`;
+    const branchPart = issue.branchName ? `
+      <span style="display: inline-flex; align-items: center; gap: 4px; color: var(--text-muted); font-size: 12px; margin-left: 4px;">
+        ${iconBranch}
+        <span id="issue-branch-display" style="font-family: monospace;">${issue.branchName}</span>
+        <button id="copy-branch-btn" class="copy-btn" title="複製 branch 名稱">${iconClipboard}</button>
+      </span>` : '';
+    const statusDropdown = issue.branchName ? `
+      <div style="position: relative; display: inline-flex;">
+        <button id="issue-status-dropdown-btn" style="display: inline-flex; align-items: center; gap: 5px; padding: 2px 7px; background: var(--btn-secondary-bg); border: 1px solid var(--border); border-radius: 10px; font-size: 11px; color: var(--text); cursor: pointer; font-family: inherit;">
+          <span class="status-dot ${this.statusDotClass(issue.status || 'todo')}" id="issue-status-dot"></span>
+          <span style="font-size: 9px; opacity: 0.5;">▾</span>
+        </button>
+        <div id="issue-status-dropdown-menu" style="display: none; position: absolute; top: calc(100% + 4px); left: 0; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 4px 16px rgba(0,0,0,0.15); z-index: 250; overflow: hidden; min-width: 130px;"></div>
+      </div>${branchPart}` : '';
+    const linkBranchBtn = !issue.branchName ? `<button id="link-branch-btn" class="copy-btn" title="連結現有 branch" style="display: inline-flex; align-items: center; gap: 4px; padding: 2px 7px; border: 1px dashed var(--border); border-radius: 10px; font-size: 11px; color: var(--text-secondary);">${iconBranch} ＋</button>` : '';
+    document.getElementById('issue-detail-meta').innerHTML = `${labels}${statusDropdown}${linkBranchBtn}`;
     document.getElementById('issue-detail-toggle-btn').textContent =
-      issue.state === 'open' ? '關閉 Issue' : '重新開啟';
-    const statusSelect = document.getElementById('issue-status-select');
-    statusSelect.value = issue.status || 'todo';
-    statusSelect.style.display = issue.branchName ? '' : 'none';
-    statusSelect.previousElementSibling.style.display = issue.branchName ? '' : 'none';
-    document.getElementById('issue-branch-display').textContent = issue.branchName || '';
-    document.getElementById('copy-branch-btn').style.display = issue.branchName ? '' : 'none';
+      issue.state === 'open' ? '設為關閉' : '重新開啟';
+    if (issue.branchName) {
+      document.getElementById('issue-status-dropdown-btn').addEventListener('click', (e) => {
+        e.stopPropagation();
+        const menu = document.getElementById('issue-status-dropdown-menu');
+        menu.style.display = menu.style.display === 'none' ? '' : 'none';
+      });
+      document.getElementById('copy-branch-btn').addEventListener('click', () => this.copyBranchName());
+      const statuses = [
+        { key: 'todo', label: 'Todo' },
+        { key: 'process', label: 'In Progress' },
+        { key: 'review', label: 'In Review' },
+        { key: 'done', label: 'Done' }
+      ];
+      const statusMenu = document.getElementById('issue-status-dropdown-menu');
+      statusMenu.innerHTML = statuses.map(s =>
+        `<div class="status-menu-item" data-value="${s.key}" style="display: flex; align-items: center; gap: 8px; padding: 8px 12px; font-size: 12px; cursor: pointer; color: var(--text);">
+          <span class="status-dot ${this.statusDotClass(s.key)}"></span>
+          <span>${s.label}</span>
+        </div>`
+      ).join('');
+      statusMenu.querySelectorAll('.status-menu-item').forEach(el => {
+        el.addEventListener('click', (e) => {
+          e.stopPropagation();
+          this.updateLocalStatus(el.dataset.value);
+          this.closeStatusDropdown();
+        });
+      });
+    } else {
+      document.getElementById('link-branch-btn').addEventListener('click', () => {
+        document.getElementById('issue-link-branch-row').style.display = 'flex';
+        document.getElementById('issue-link-branch-input').focus();
+      });
+    }
     document.getElementById('issue-detail-body').textContent = issue.body || '（無說明）';
     const commentsEl = document.getElementById('issue-detail-comments');
     if (comments.length === 0) {
@@ -545,7 +771,7 @@ class ProjectManager {
       }).join('');
     }
   }
-  // 複製 branch 名稱到剪貼簿，並短暫顯示「已複製」回饋
+  // 複製 branch 名稱到剪貼簿，並短暫以打勾 icon 回饋
   async copyBranchName() {
     const name = document.getElementById('issue-branch-display').textContent;
     if (!name) {
@@ -553,9 +779,11 @@ class ProjectManager {
     }
     await navigator.clipboard.writeText(name);
     const btn = document.getElementById('copy-branch-btn');
-    btn.textContent = '已複製';
+    const iconClipboard = `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>`;
+    const iconCheck = `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
+    btn.innerHTML = iconCheck;
     setTimeout(() => {
-      btn.textContent = '複製';
+      btn.innerHTML = iconClipboard;
     }, 1500);
   }
   // 關閉 issue 詳情 modal 並清空暫存狀態
@@ -564,6 +792,45 @@ class ProjectManager {
     this._detailIssue = null;
     this._detailIssueNumber = null;
     this._detailProject = null;
+    this._detailComments = null;
+  }
+  // 收起 branch 連結輸入列並清空
+  closeLinkBranchForm() {
+    const row = document.getElementById('issue-link-branch-row');
+    if (row) {
+      row.style.display = 'none';
+    }
+    const input = document.getElementById('issue-link-branch-input');
+    if (input) {
+      input.value = '';
+    }
+  }
+  // 將輸入的 branch 名稱寫入本地 storage 並重新渲染
+  async saveBranchLink() {
+    const input = document.getElementById('issue-link-branch-input');
+    const branchName = input.value.trim();
+    if (!branchName || !this._detailIssue) {
+      return;
+    }
+    const btn = document.getElementById('issue-link-branch-save-btn');
+    btn.disabled = true;
+    btn.textContent = '儲存中...';
+    try {
+      const cached = await this.storage.getIssuesByProject(this.activeProjectId);
+      const match = cached.find(i => i.number === this._detailIssue.number);
+      if (!match) {
+        throw new Error('找不到對應的 issue');
+      }
+      await this.storage.patchIssue(match.id, { branchName });
+      this._detailIssue.branchName = branchName;
+      this._detailIssue.id = match.id;
+      this.renderIssueDetail(this._detailIssue, this._detailComments || []);
+      await this.renderIssues();
+    } catch (error) {
+      this.showMessage('連結失敗: ' + error.message, 'error');
+      btn.disabled = false;
+      btn.textContent = '連結';
+    }
   }
   // 更新 issue 本地進度並重新渲染列表
   async updateLocalStatus(newStatus) {
@@ -572,6 +839,10 @@ class ProjectManager {
     }
     this._detailIssue.status = newStatus;
     await this.storage.patchIssue(this._detailIssue.id, { status: newStatus });
+    const dot = document.getElementById('issue-status-dot');
+    if (dot) {
+      dot.className = `status-dot ${this.statusDotClass(newStatus)}`;
+    }
     await this.renderIssues();
   }
   // 在 GitHub 切換 issue 的開啟/關閉狀態
@@ -618,6 +889,7 @@ class ProjectManager {
   // 關閉刪除 issue modal
   closeDeleteIssueModal() {
     document.getElementById('delete-issue-modal').classList.remove('open');
+    document.getElementById('delete-issue-error').style.display = 'none';
   }
   // 從 GitHub 和本地永久刪除 issue
   async confirmDeleteIssue() {
@@ -625,16 +897,23 @@ class ProjectManager {
       return;
     }
     const btn = document.getElementById('confirm-delete-issue-btn');
+    const errEl = document.getElementById('delete-issue-error');
     btn.disabled = true;
     btn.textContent = '刪除中...';
+    errEl.style.display = 'none';
     try {
       await this.github.deleteIssue(this._detailIssue.node_id);
-      await this.storage.deleteIssue(this._detailIssue.id);
+      const cached = await this.storage.getIssuesByProject(this.activeProjectId);
+      const match = cached.find(i => i.number === this._detailIssue.number);
+      if (match) {
+        await this.storage.deleteIssue(match.id);
+      }
       this.closeDeleteIssueModal();
       this.closeIssueDetail();
       await this.renderIssues();
     } catch (error) {
-      this.showMessage('刪除失敗: ' + error.message, 'error');
+      errEl.textContent = '刪除失敗：' + error.message;
+      errEl.style.display = 'block';
       btn.disabled = false;
       btn.textContent = '確認刪除';
     }

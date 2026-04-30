@@ -34,7 +34,8 @@ class GitHubAPI {
     if (!response.ok) {
       throw new Error(`GitHub API error: ${response.status}`);
     }
-    return response.json();
+    const data = await response.json();
+    return data.filter(item => !item.pull_request);
   }
   // 在 repo 建立新 issue
   async createIssue(owner, repo, title, body, labels) {

@@ -299,6 +299,19 @@
       font-size: 11px;
       font-weight: 500;
     }
+    .status-dot {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .dot-todo { background: #ffffff; border: 1px solid #aaaaaa; }
+    .dot-process { background: #eab308; }
+    .dot-review { background: #4caf50; }
+    .dot-done { background: #2196f3; }
+    .dot-closed { background: #888888; }
+    .status-menu-item:hover { background: var(--bg); }
     .status-todo {
       background: var(--label-bg);
       color: var(--text-secondary);
@@ -314,6 +327,22 @@
     .status-done {
       background: rgba(76, 175, 80, 0.2);
       color: #4caf50;
+    }
+    .status-init {
+      background: rgba(111, 66, 193, 0.15);
+      color: #8250df;
+    }
+    .status-bug {
+      background: rgba(197, 34, 31, 0.15);
+      color: var(--error-text);
+    }
+    .status-feature {
+      background: rgba(33, 150, 243, 0.15);
+      color: #2196f3;
+    }
+    .status-label {
+      background: var(--label-bg);
+      color: var(--text-secondary);
     }
     .comment-item {
       padding: 10px 0;
@@ -333,15 +362,16 @@
       color: var(--text);
     }
     .copy-btn {
-      padding: 2px 7px;
-      font-size: 11px;
+      padding: 3px 5px;
       background: transparent;
       border: 1px solid var(--border);
       color: var(--text-secondary);
       border-radius: 3px;
       cursor: pointer;
-      line-height: 1.5;
-      font-weight: 400;
+      line-height: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
     }
     .copy-btn:hover {
       background: var(--btn-secondary-bg);
@@ -635,6 +665,7 @@
       <div class="modal-body">
         <p class="warning">此操作無法復原，issue 將從 GitHub 永久刪除。</p>
         <p id="delete-issue-name-hint"></p>
+        <p id="delete-issue-error" style="display: none; color: var(--error-text); font-size: 12px; margin-top: 8px;"></p>
       </div>
       <div class="modal-footer">
         <button class="secondary" id="cancel-delete-issue-btn">取消</button>
@@ -668,27 +699,38 @@
   <div id="issue-detail-modal" class="modal-overlay">
     <div class="modal-box" style="width: 540px; max-height: 80vh; display: flex; flex-direction: column;">
       <div class="modal-header">
-        <span id="issue-detail-title" style="font-size: 15px; flex: 1; margin-right: 12px;"></span>
+        <div style="flex: 1; display: flex; align-items: center; gap: 6px; margin-right: 12px; min-width: 0;">
+          <span id="issue-detail-title" style="font-size: 15px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1;"></span>
+          <input id="issue-title-edit-input" type="text" style="display: none; flex: 1; font-size: 15px; font-weight: 600; padding: 2px 6px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface); color: var(--text); font-family: inherit;">
+          <button id="issue-title-edit-btn" class="copy-btn" title="編輯標題" style="flex-shrink: 0;"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path></svg></button>
+          <button id="issue-title-save-btn" style="display: none; padding: 3px 8px; font-size: 12px; flex-shrink: 0;">儲存</button>
+          <button id="issue-title-cancel-btn" class="secondary" style="display: none; padding: 3px 8px; font-size: 12px; flex-shrink: 0;">取消</button>
+        </div>
         <button class="close-btn" id="close-issue-detail-btn">✕</button>
       </div>
       <div class="modal-body" style="flex: 1; overflow-y: auto;">
-        <div id="issue-detail-meta" style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px;"></div>
-        <div style="display: flex; align-items: flex-end; gap: 16px; margin-bottom: 16px;">
-          <div class="form-group" style="margin: 0; flex-shrink: 0;">
-            <label style="font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-secondary); display: block; margin-bottom: 4px;">狀態</label>
-            <select id="issue-status-select" style="padding: 4px 8px; font-size: 12px; width: auto;">
-              <option value="todo">Todo</option>
-              <option value="process">In Progress</option>
-              <option value="review">Review</option>
-              <option value="done">Done</option>
-            </select>
+        <div id="issue-detail-meta" style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px;"></div>
+        <div id="issue-link-branch-row" style="display: none; align-items: center; gap: 6px; margin-bottom: 14px;">
+          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink: 0; color: var(--text-secondary);"><line x1="6" y1="3" x2="6" y2="15"></line><circle cx="18" cy="6" r="3"></circle><circle cx="6" cy="18" r="3"></circle><path d="M18 9a9 9 0 0 1-9 9"></path></svg>
+          <input id="issue-link-branch-input" type="text" placeholder="輸入 branch 名稱" style="flex: 1; padding: 3px 8px; font-size: 12px; font-family: monospace; border: 1px solid var(--border); border-radius: 4px; background: var(--surface); color: var(--text);">
+          <button id="issue-link-branch-save-btn" style="padding: 3px 10px; font-size: 12px;">連結</button>
+          <button id="issue-link-branch-cancel-btn" class="secondary" style="padding: 3px 10px; font-size: 12px;">取消</button>
+        </div>
+        <div style="margin-bottom: 14px;">
+          <button id="issue-detail-toggle-btn" class="secondary" style="font-size: 12px; padding: 4px 10px;"></button>
+        </div>
+        <div style="margin-bottom: 16px;">
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;">
+            <span style="font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-secondary);">說明</span>
+            <button id="issue-body-edit-btn" class="copy-btn" title="編輯說明"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path></svg></button>
           </div>
-          <div style="display: flex; align-items: center; gap: 6px; padding-bottom: 2px;">
-            <span id="issue-branch-display" style="font-size: 12px; color: var(--text-muted); font-family: monospace;"></span>
-            <button id="copy-branch-btn" class="copy-btn" style="display: none;">複製</button>
+          <div id="issue-detail-body" style="font-size: 13px; color: var(--text-secondary); white-space: pre-wrap;"></div>
+          <textarea id="issue-body-edit-input" style="display: none; width: 100%; padding: 7px 10px; border: 1px solid var(--border); border-radius: 4px; font-size: 13px; background: var(--surface); color: var(--text); font-family: inherit; resize: vertical; min-height: 80px;" placeholder="詳細描述..."></textarea>
+          <div id="issue-body-edit-actions" style="display: none; justify-content: flex-end; gap: 8px; margin-top: 8px;">
+            <button id="issue-body-cancel-btn" class="secondary">取消</button>
+            <button id="issue-body-save-btn">儲存</button>
           </div>
         </div>
-        <div id="issue-detail-body" style="font-size: 13px; color: var(--text-secondary); white-space: pre-wrap; margin-bottom: 16px;"></div>
         <div style="border-top: 1px solid var(--border); padding-top: 16px;">
           <div style="font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-secondary); margin-bottom: 12px;">留言</div>
           <div id="issue-detail-comments"></div>
@@ -699,10 +741,7 @@
       </div>
       <div class="modal-footer" style="justify-content: space-between;">
         <button id="issue-detail-delete-btn" class="danger">刪除 Issue</button>
-        <div style="display: flex; gap: 8px;">
-          <button id="issue-detail-toggle-btn" class="secondary"></button>
-          <button id="issue-comment-submit-btn">送出留言</button>
-        </div>
+        <button id="issue-comment-submit-btn">送出留言</button>
       </div>
     </div>
   </div>
