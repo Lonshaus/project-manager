@@ -201,6 +201,24 @@ class GitHubAPI {
     const refs = await response.json();
     return refs.length === 0;
   }
+  // 在 repo 建立或更新單一檔案，可用於在空 repo 建立初始 commit
+  async createFile(owner, repo, path, content, message, branch) {
+    const response = await fetch(
+      `${this.baseURL}/repos/${owner}/${repo}/contents/${path}`,
+      {
+        method: 'PUT',
+        headers: {
+          'Authorization': `token ${this.token}`,
+          'Accept': 'application/vnd.github.v3+json'
+        },
+        body: JSON.stringify({ message, content: btoa(content), branch })
+      }
+    );
+    if (!response.ok) {
+      throw new Error(`GitHub API error: ${response.status}`);
+    }
+    return response.json();
+  }
   // 在 repo 建立 label（已存在則跳過）
   async createLabel(owner, repo, name, color) {
     const response = await fetch(

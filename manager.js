@@ -233,6 +233,10 @@ class ProjectManager {
       await this.reload();
     } else {
       this._initProject = project;
+      // 背景建立空白 README.md 以產生第一個 commit，讓之後 branch 建立可以成功
+      this._initReadmePromise = this.github.createFile(
+        project.owner, project.repo, 'README.md', '', 'Initial commit', 'master'
+      );
       // 先 reload 讓專案出現在 dropdown，再開 modal
       await this.reload();
       this.openInitIssueModal();
@@ -248,6 +252,7 @@ class ProjectManager {
   // 關閉初始化 issue modal
   closeInitIssueModal() {
     document.getElementById('init-issue-modal').classList.remove('open');
+    this._initReadmePromise = null;
   }
   // 建立初始化 issue 並儲存 init branch 名稱
   async confirmInitIssue() {
@@ -264,6 +269,15 @@ class ProjectManager {
     btn.disabled = true;
     btn.textContent = '建立中...';
     try {
+      // 等背景 README commit 完成，確保 branch 建立不會因為空 repo 而失敗
+      if (this._initReadmePromise) {
+        try {
+          await this._initReadmePromise;
+        } catch (e) {
+          // 若背景作業失敗（例如 README 已存在），繼續嘗試建立 branch
+        }
+        this._initReadmePromise = null;
+      }
       await this.github.createLabel(project.owner, project.repo, 'init', '6f42c1');
       const issue = await this.github.createIssue(project.owner, project.repo, title, body, ['init']);
       const randomNum = Math.floor(Math.random() * 9000) + 1000;
@@ -272,7 +286,7 @@ class ProjectManager {
         const { sha } = await this.github.getDefaultBranchSHA(project.owner, project.repo);
         await this.github.createBranch(project.owner, project.repo, branchName, sha);
       } catch (branchErr) {
-        // 空 repo 無 commit，無法建立 branch ref；名稱已存好，等第一次 push 後 branch 名稱對齊即可
+        this.showMessage(`Issue 已建立，但 branch 建立失敗: ${branchErr.message}`, 'error');
       }
       await this.storage.saveIssue({
         ...issue,
