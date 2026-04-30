@@ -1,0 +1,715 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Project Manager</title>
+  <style>
+    :root {
+      --bg: #f5f5f5;
+      --surface: #ffffff;
+      --text: #333333;
+      --text-secondary: #666666;
+      --text-muted: #999999;
+      --border: #e0e0e0;
+      --label-bg: #f0f0f0;
+      --btn-secondary-bg: #e8e8e8;
+      --btn-secondary-text: #333333;
+      --error-bg: #fce8e6;
+      --error-text: #c5221f;
+      --error-border: #f1dce0;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #1a1a1a;
+        --surface: #2d2d2d;
+        --text: #e0e0e0;
+        --text-secondary: #999999;
+        --text-muted: #666666;
+        --border: #444444;
+        --label-bg: #3a3a3a;
+        --btn-secondary-bg: #3a3a3a;
+        --btn-secondary-text: #e0e0e0;
+        --error-bg: #4a1a18;
+        --error-text: #ff6b63;
+        --error-border: #7a2a28;
+      }
+    }
+    [data-theme="dark"] {
+      --bg: #1a1a1a;
+      --surface: #2d2d2d;
+      --text: #e0e0e0;
+      --text-secondary: #999999;
+      --text-muted: #666666;
+      --border: #444444;
+      --label-bg: #3a3a3a;
+      --btn-secondary-bg: #3a3a3a;
+      --btn-secondary-text: #e0e0e0;
+      --error-bg: #4a1a18;
+      --error-text: #ff6b63;
+      --error-border: #7a2a28;
+    }
+    [data-theme="light"] {
+      --bg: #f5f5f5;
+      --surface: #ffffff;
+      --text: #333333;
+      --text-secondary: #666666;
+      --text-muted: #999999;
+      --border: #e0e0e0;
+      --label-bg: #f0f0f0;
+      --btn-secondary-bg: #e8e8e8;
+      --btn-secondary-text: #333333;
+      --error-bg: #fce8e6;
+      --error-text: #c5221f;
+      --error-border: #f1dce0;
+    }
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background-color: var(--bg);
+      color: var(--text);
+    }
+    .header {
+      background: var(--surface);
+      padding: 12px 20px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    h1 {
+      font-size: 18px;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    .controls {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    button {
+      padding: 7px 12px;
+      background-color: #0066cc;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      font-size: 13px;
+      cursor: pointer;
+      font-weight: 500;
+    }
+    button:hover {
+      background-color: #0052a3;
+    }
+    button:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+    button.secondary {
+      background-color: var(--btn-secondary-bg);
+      color: var(--btn-secondary-text);
+    }
+    button.secondary:hover {
+      filter: brightness(0.9);
+    }
+    button.danger {
+      background-color: transparent;
+      color: var(--error-text);
+      border: 1px solid var(--error-border);
+    }
+    button.danger:hover:not(:disabled) {
+      background-color: var(--error-bg);
+    }
+    button.danger:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+    .project-dropdown {
+      position: relative;
+    }
+    .project-dropdown-btn {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 10px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      background: var(--bg);
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 400;
+      max-width: 200px;
+      cursor: pointer;
+    }
+    .project-dropdown-btn:hover {
+      background-color: var(--btn-secondary-bg);
+    }
+    .project-dropdown-btn .arrow {
+      font-size: 10px;
+      opacity: 0.6;
+    }
+    .project-dropdown-menu {
+      display: none;
+      position: absolute;
+      top: calc(100% + 4px);
+      left: 0;
+      min-width: 220px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+      z-index: 50;
+      overflow: hidden;
+    }
+    .project-dropdown-menu.open {
+      display: block;
+    }
+    .dropdown-item {
+      padding: 9px 14px;
+      font-size: 13px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .dropdown-item:hover {
+      background: var(--bg);
+    }
+    .dropdown-item.active {
+      font-weight: 600;
+    }
+    .dropdown-item.active::before {
+      content: '✓';
+      font-size: 12px;
+      color: #0066cc;
+    }
+    .dropdown-item:not(.active)::before {
+      content: '';
+      display: inline-block;
+      width: 12px;
+    }
+    .dropdown-divider {
+      height: 1px;
+      background: var(--border);
+      margin: 4px 0;
+    }
+    .dropdown-item.add-item {
+      color: #0066cc;
+    }
+    .dropdown-item.add-item:hover {
+      background: #e8f0fe;
+    }
+    .dropdown-item.remove-item {
+      color: var(--error-text);
+    }
+    .dropdown-item.remove-item:hover {
+      background: var(--error-bg);
+    }
+    .content {
+      padding: 20px;
+    }
+    .message {
+      padding: 12px 16px;
+      border-radius: 4px;
+      margin-bottom: 16px;
+      display: none;
+    }
+    .message.error {
+      background-color: var(--error-bg);
+      color: var(--error-text);
+      border: 1px solid var(--error-border);
+      display: block;
+    }
+    .issues-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 16px;
+      align-items: start;
+    }
+    .issues-column {
+      background: var(--surface);
+      border-radius: 8px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+      overflow: hidden;
+    }
+    .issues-column-header {
+      padding: 10px 16px;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-secondary);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .issues-column-count {
+      background: var(--label-bg);
+      border-radius: 10px;
+      padding: 1px 7px;
+      font-size: 11px;
+    }
+    .issues-column-empty {
+      padding: 24px 16px;
+      font-size: 13px;
+      color: var(--text-muted);
+      text-align: center;
+    }
+    .issue-item {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+      cursor: pointer;
+    }
+    .issue-item:last-child {
+      border-bottom: none;
+    }
+    .issue-item:hover {
+      background: var(--btn-secondary-bg);
+    }
+    .issue-title {
+      font-weight: 500;
+      margin-bottom: 4px;
+      font-size: 13px;
+    }
+    .issue-meta {
+      font-size: 12px;
+      color: var(--text-secondary);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .issue-label {
+      padding: 2px 8px;
+      background-color: var(--label-bg);
+      border-radius: 12px;
+      font-size: 11px;
+    }
+    .status-badge {
+      padding: 2px 8px;
+      border-radius: 10px;
+      font-size: 11px;
+      font-weight: 500;
+    }
+    .status-todo {
+      background: var(--label-bg);
+      color: var(--text-secondary);
+    }
+    .status-process {
+      background: rgba(255, 152, 0, 0.2);
+      color: #ff9800;
+    }
+    .status-review {
+      background: rgba(33, 150, 243, 0.2);
+      color: #2196f3;
+    }
+    .status-done {
+      background: rgba(76, 175, 80, 0.2);
+      color: #4caf50;
+    }
+    .comment-item {
+      padding: 10px 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 13px;
+    }
+    .comment-item:last-child {
+      border-bottom: none;
+    }
+    .comment-meta {
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-bottom: 4px;
+    }
+    .comment-body {
+      white-space: pre-wrap;
+      color: var(--text);
+    }
+    .copy-btn {
+      padding: 2px 7px;
+      font-size: 11px;
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--text-secondary);
+      border-radius: 3px;
+      cursor: pointer;
+      line-height: 1.5;
+      font-weight: 400;
+    }
+    .copy-btn:hover {
+      background: var(--btn-secondary-bg);
+      color: var(--text);
+    }
+    .empty-state {
+      text-align: center;
+      padding: 60px 20px;
+      color: var(--text-muted);
+      font-size: 15px;
+    }
+    .overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.3);
+      z-index: 100;
+    }
+    .overlay.open {
+      display: block;
+    }
+    .settings-panel {
+      position: fixed;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      width: 320px;
+      background: var(--surface);
+      border-left: 1px solid var(--border);
+      z-index: 101;
+      display: flex;
+      flex-direction: column;
+      transform: translateX(100%);
+      transition: transform 0.25s ease;
+    }
+    .settings-panel.open {
+      transform: translateX(0);
+    }
+    .panel-header {
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .panel-header h2 {
+      font-size: 16px;
+      font-weight: 600;
+    }
+    .close-btn {
+      background: none;
+      border: none;
+      color: var(--text-secondary);
+      font-size: 18px;
+      cursor: pointer;
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+    .close-btn:hover {
+      background: var(--btn-secondary-bg);
+      color: var(--text);
+    }
+    .panel-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 20px;
+    }
+    .panel-section {
+      margin-bottom: 28px;
+    }
+    .panel-section h3 {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-secondary);
+      margin-bottom: 12px;
+    }
+    .panel-section > button {
+      width: 100%;
+      margin-top: 4px;
+    }
+    .form-group {
+      margin-bottom: 10px;
+    }
+    .form-group label {
+      display: block;
+      font-size: 13px;
+      font-weight: 500;
+      margin-bottom: 4px;
+    }
+    .form-group input,
+    .form-group select,
+    .form-group textarea {
+      width: 100%;
+      padding: 7px 10px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      font-size: 13px;
+      background: var(--surface);
+      color: var(--text);
+      font-family: inherit;
+    }
+    .form-group textarea {
+      resize: vertical;
+      min-height: 80px;
+    }
+    .form-group input:focus,
+    .form-group select:focus,
+    .form-group textarea:focus {
+      outline: none;
+      border-color: #0066cc;
+    }
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.4);
+      z-index: 200;
+      align-items: center;
+      justify-content: center;
+    }
+    .modal-overlay.open {
+      display: flex;
+    }
+    .modal-box {
+      background: var(--surface);
+      border-radius: 8px;
+      width: 440px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+    }
+    .modal-header {
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-weight: 600;
+    }
+    .modal-body {
+      padding: 20px;
+    }
+    .modal-body p {
+      font-size: 13px;
+      margin-bottom: 12px;
+      color: var(--text-secondary);
+    }
+    .modal-body p.warning {
+      color: var(--error-text);
+    }
+    .modal-footer {
+      padding: 12px 20px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="header-left">
+      <h1>Project Manager</h1>
+      <div class="project-dropdown" id="project-dropdown">
+        <button class="project-dropdown-btn" id="project-dropdown-btn">
+          <span id="project-dropdown-label">選擇專案</span>
+          <span class="arrow">▾</span>
+        </button>
+        <div class="project-dropdown-menu" id="project-dropdown-menu"></div>
+      </div>
+    </div>
+    <div class="controls">
+      <button id="add-issue-btn">＋ 新增 Issue</button>
+      <button id="refresh-btn" class="secondary">重整</button>
+      <button id="settings-btn" class="secondary">設定</button>
+    </div>
+  </div>
+  <div class="content">
+    <div id="message" class="message"></div>
+    <div id="issues-container"></div>
+  </div>
+  <div id="settings-overlay" class="overlay"></div>
+  <div id="settings-panel" class="settings-panel">
+    <div class="panel-header">
+      <h2>設定</h2>
+      <button id="close-settings-btn" class="close-btn">✕</button>
+    </div>
+    <div class="panel-body">
+      <div class="panel-section">
+        <h3>帳戶</h3>
+        <div class="form-group">
+          <label>GitHub Username</label>
+          <input type="text" id="settings-owner" placeholder="your-username">
+        </div>
+        <div class="form-group">
+          <label>Personal Access Token</label>
+          <input type="password" id="settings-token" placeholder="ghp_xxxxxxxxxxxx">
+        </div>
+        <button id="save-account-btn">保存帳戶設定</button>
+        <div id="token-message" style="display: none; margin-top: 8px; font-size: 12px; color: #34a853;"></div>
+      </div>
+      <div class="panel-section">
+        <h3>外觀</h3>
+        <div class="form-group">
+          <label>主題</label>
+          <select id="settings-theme">
+            <option value="system">跟隨系統</option>
+            <option value="light">亮色</option>
+            <option value="dark">暗色</option>
+          </select>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div id="add-project-modal" class="modal-overlay">
+    <div class="modal-box">
+      <div class="modal-header">
+        <span>新增專案</span>
+        <button class="close-btn" id="close-add-project-btn">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label>顯示名稱</label>
+          <input type="text" id="modal-project-name" placeholder="我的專案">
+        </div>
+        <div class="form-group">
+          <label>Repository</label>
+          <input type="text" id="modal-project-repo" placeholder="repo-name">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="secondary" id="cancel-add-project-btn">取消</button>
+        <button id="confirm-add-project-btn">新增</button>
+      </div>
+    </div>
+  </div>
+  <div id="remove-project-modal" class="modal-overlay">
+    <div class="modal-box">
+      <div class="modal-header">
+        <span>移除專案</span>
+        <button class="close-btn" id="close-remove-project-btn">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="warning">此操作無法復原，本地快取的 issues 也將一併清除。</p>
+        <p>請輸入專案名稱 <strong id="remove-project-name-hint"></strong> 來確認移除：</p>
+        <div class="form-group" style="margin-top: 10px;">
+          <input type="text" id="remove-confirm-input" placeholder="輸入專案名稱">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="secondary" id="cancel-remove-project-btn">取消</button>
+        <button id="confirm-remove-project-btn" class="danger" disabled>確認移除</button>
+      </div>
+    </div>
+  </div>
+  <div id="add-issue-modal" class="modal-overlay">
+    <div class="modal-box">
+      <div class="modal-header">
+        <span>新增 Issue</span>
+        <button class="close-btn" id="close-add-issue-btn">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label>標題</label>
+          <input type="text" id="issue-title" placeholder="簡短描述問題或需求">
+        </div>
+        <div class="form-group">
+          <label>類型</label>
+          <select id="issue-type">
+            <option value="bug">Bug</option>
+            <option value="feature">功能新增</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>說明（選填）</label>
+          <textarea id="issue-body" placeholder="詳細描述..."></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="secondary" id="cancel-add-issue-btn">取消</button>
+        <button id="confirm-add-issue-btn">建立 Issue</button>
+      </div>
+    </div>
+  </div>
+  <div id="delete-issue-modal" class="modal-overlay" style="z-index: 300;">
+    <div class="modal-box">
+      <div class="modal-header">
+        <span>刪除 Issue</span>
+        <button class="close-btn" id="close-delete-issue-btn">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="warning">此操作無法復原，issue 將從 GitHub 永久刪除。</p>
+        <p id="delete-issue-name-hint"></p>
+      </div>
+      <div class="modal-footer">
+        <button class="secondary" id="cancel-delete-issue-btn">取消</button>
+        <button id="confirm-delete-issue-btn" class="danger">確認刪除</button>
+      </div>
+    </div>
+  </div>
+  <div id="init-issue-modal" class="modal-overlay">
+    <div class="modal-box">
+      <div class="modal-header">
+        <span>建立初始化 Issue</span>
+        <button class="close-btn" id="close-init-issue-btn">✕</button>
+      </div>
+      <div class="modal-body">
+        <p>此 repo 目前為空，請建立一個初始化 issue 作為專案起點。</p>
+        <div class="form-group">
+          <label>標題</label>
+          <input type="text" id="init-issue-title" placeholder="專案初始化">
+        </div>
+        <div class="form-group">
+          <label>說明（選填）</label>
+          <textarea id="init-issue-body" placeholder="描述此專案的初始化內容..."></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="secondary" id="cancel-init-issue-btn">取消</button>
+        <button id="confirm-init-issue-btn">建立 Issue</button>
+      </div>
+    </div>
+  </div>
+  <div id="issue-detail-modal" class="modal-overlay">
+    <div class="modal-box" style="width: 540px; max-height: 80vh; display: flex; flex-direction: column;">
+      <div class="modal-header">
+        <span id="issue-detail-title" style="font-size: 15px; flex: 1; margin-right: 12px;"></span>
+        <button class="close-btn" id="close-issue-detail-btn">✕</button>
+      </div>
+      <div class="modal-body" style="flex: 1; overflow-y: auto;">
+        <div id="issue-detail-meta" style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px;"></div>
+        <div style="display: flex; align-items: flex-end; gap: 16px; margin-bottom: 16px;">
+          <div class="form-group" style="margin: 0; flex-shrink: 0;">
+            <label style="font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-secondary); display: block; margin-bottom: 4px;">狀態</label>
+            <select id="issue-status-select" style="padding: 4px 8px; font-size: 12px; width: auto;">
+              <option value="todo">Todo</option>
+              <option value="process">In Progress</option>
+              <option value="review">Review</option>
+              <option value="done">Done</option>
+            </select>
+          </div>
+          <div style="display: flex; align-items: center; gap: 6px; padding-bottom: 2px;">
+            <span id="issue-branch-display" style="font-size: 12px; color: var(--text-muted); font-family: monospace;"></span>
+            <button id="copy-branch-btn" class="copy-btn" style="display: none;">複製</button>
+          </div>
+        </div>
+        <div id="issue-detail-body" style="font-size: 13px; color: var(--text-secondary); white-space: pre-wrap; margin-bottom: 16px;"></div>
+        <div style="border-top: 1px solid var(--border); padding-top: 16px;">
+          <div style="font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-secondary); margin-bottom: 12px;">留言</div>
+          <div id="issue-detail-comments"></div>
+          <div class="form-group" style="margin-top: 12px;">
+            <textarea id="issue-comment-input" placeholder="新增留言..." style="min-height: 72px;"></textarea>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer" style="justify-content: space-between;">
+        <button id="issue-detail-delete-btn" class="danger">刪除 Issue</button>
+        <div style="display: flex; gap: 8px;">
+          <button id="issue-detail-toggle-btn" class="secondary"></button>
+          <button id="issue-comment-submit-btn">送出留言</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <script src="theme.js"></script>
+  <script src="storage.js"></script>
+  <script src="github-api.js"></script>
+  <script src="settings.js"></script>
+  <script src="manager.js"></script>
+</body>
+</html>
