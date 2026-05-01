@@ -1,0 +1,803 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Project Manager</title>
+  <style>
+    :root {
+      --bg: #f5f5f5;
+      --surface: #ffffff;
+      --text: #333333;
+      --text-secondary: #666666;
+      --text-muted: #999999;
+      --border: #e0e0e0;
+      --label-bg: #f0f0f0;
+      --btn-secondary-bg: #e8e8e8;
+      --btn-secondary-text: #333333;
+      --error-bg: #fce8e6;
+      --error-text: #c5221f;
+      --error-border: #f1dce0;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #1a1a1a;
+        --surface: #2d2d2d;
+        --text: #e0e0e0;
+        --text-secondary: #999999;
+        --text-muted: #666666;
+        --border: #444444;
+        --label-bg: #3a3a3a;
+        --btn-secondary-bg: #3a3a3a;
+        --btn-secondary-text: #e0e0e0;
+        --error-bg: #4a1a18;
+        --error-text: #ff6b63;
+        --error-border: #7a2a28;
+      }
+    }
+    [data-theme="dark"] {
+      --bg: #1a1a1a;
+      --surface: #2d2d2d;
+      --text: #e0e0e0;
+      --text-secondary: #999999;
+      --text-muted: #666666;
+      --border: #444444;
+      --label-bg: #3a3a3a;
+      --btn-secondary-bg: #3a3a3a;
+      --btn-secondary-text: #e0e0e0;
+      --error-bg: #4a1a18;
+      --error-text: #ff6b63;
+      --error-border: #7a2a28;
+    }
+    [data-theme="light"] {
+      --bg: #f5f5f5;
+      --surface: #ffffff;
+      --text: #333333;
+      --text-secondary: #666666;
+      --text-muted: #999999;
+      --border: #e0e0e0;
+      --label-bg: #f0f0f0;
+      --btn-secondary-bg: #e8e8e8;
+      --btn-secondary-text: #333333;
+      --error-bg: #fce8e6;
+      --error-text: #c5221f;
+      --error-border: #f1dce0;
+    }
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background-color: var(--bg);
+      color: var(--text);
+    }
+    .header {
+      background: var(--surface);
+      padding: 12px 20px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    h1 {
+      font-size: 18px;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    .controls {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    button {
+      padding: 7px 12px;
+      background-color: #0066cc;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      font-size: 13px;
+      cursor: pointer;
+      font-weight: 500;
+    }
+    button:hover {
+      background-color: #0052a3;
+    }
+    button:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+    button.secondary {
+      background-color: var(--btn-secondary-bg);
+      color: var(--btn-secondary-text);
+    }
+    button.secondary:hover {
+      filter: brightness(0.9);
+    }
+    button.danger {
+      background-color: transparent;
+      color: var(--error-text);
+      border: 1px solid var(--error-border);
+    }
+    button.danger:hover:not(:disabled) {
+      background-color: var(--error-bg);
+    }
+    button.danger:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+    .project-dropdown {
+      position: relative;
+    }
+    .project-dropdown-btn {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 10px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      background: var(--bg);
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 400;
+      max-width: 200px;
+      cursor: pointer;
+    }
+    .project-dropdown-btn:hover {
+      background-color: var(--btn-secondary-bg);
+    }
+    .project-dropdown-btn .arrow {
+      font-size: 10px;
+      opacity: 0.6;
+    }
+    .project-dropdown-menu {
+      display: none;
+      position: absolute;
+      top: calc(100% + 4px);
+      left: 0;
+      min-width: 220px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+      z-index: 50;
+      overflow: hidden;
+    }
+    .project-dropdown-menu.open {
+      display: block;
+    }
+    .dropdown-item {
+      padding: 9px 14px;
+      font-size: 13px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .dropdown-item:hover {
+      background: var(--bg);
+    }
+    .dropdown-item.active {
+      font-weight: 600;
+    }
+    .dropdown-item.active::before {
+      content: '✓';
+      font-size: 12px;
+      color: #0066cc;
+    }
+    .dropdown-item:not(.active)::before {
+      content: '';
+      display: inline-block;
+      width: 12px;
+    }
+    .dropdown-divider {
+      height: 1px;
+      background: var(--border);
+      margin: 4px 0;
+    }
+    .dropdown-item.add-item {
+      color: #0066cc;
+    }
+    .dropdown-item.add-item:hover {
+      background: #e8f0fe;
+    }
+    .dropdown-item.remove-item {
+      color: var(--error-text);
+    }
+    .dropdown-item.remove-item:hover {
+      background: var(--error-bg);
+    }
+    .content {
+      padding: 20px;
+    }
+    .message {
+      padding: 12px 16px;
+      border-radius: 4px;
+      margin-bottom: 16px;
+      display: none;
+    }
+    .message.error {
+      background-color: var(--error-bg);
+      color: var(--error-text);
+      border: 1px solid var(--error-border);
+      display: block;
+    }
+    .issues-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 16px;
+      align-items: start;
+    }
+    .issues-column {
+      background: var(--surface);
+      border-radius: 8px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+      overflow: hidden;
+    }
+    .issues-column-header {
+      padding: 10px 16px;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-secondary);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .issues-column-count {
+      background: var(--label-bg);
+      border-radius: 10px;
+      padding: 1px 7px;
+      font-size: 11px;
+    }
+    .issues-column-empty {
+      padding: 24px 16px;
+      font-size: 13px;
+      color: var(--text-muted);
+      text-align: center;
+    }
+    .issue-item {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+      cursor: pointer;
+    }
+    .issue-item:last-child {
+      border-bottom: none;
+    }
+    .issue-item:hover {
+      background: var(--btn-secondary-bg);
+    }
+    .issue-item.has-draft {
+      position: relative;
+      box-shadow: inset 4px 0 0 var(--text-secondary), inset 0 2px 4px rgba(0, 0, 0, 0.12);
+      background: rgba(128, 128, 128, 0.08);
+      padding-left: 20px;
+    }
+    .issue-item.has-draft::after {
+      content: attr(data-unsaved-label);
+      position: absolute;
+      top: 10px;
+      right: 12px;
+      padding: 1px 7px;
+      font-size: 10px;
+      font-weight: 600;
+      background: var(--text-secondary);
+      color: var(--surface);
+      border-radius: 8px;
+      letter-spacing: 0.05em;
+    }
+    .issue-title {
+      font-weight: 500;
+      margin-bottom: 4px;
+      font-size: 13px;
+    }
+    .issue-meta {
+      font-size: 12px;
+      color: var(--text-secondary);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .issue-label {
+      padding: 2px 8px;
+      background-color: var(--label-bg);
+      border-radius: 12px;
+      font-size: 11px;
+    }
+    .status-badge {
+      padding: 2px 8px;
+      border-radius: 10px;
+      font-size: 11px;
+      font-weight: 500;
+    }
+    .status-dot {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .dot-todo { background: #ffffff; border: 1px solid #aaaaaa; }
+    .dot-process { background: #eab308; }
+    .dot-review { background: #4caf50; }
+    .dot-done { background: #2196f3; }
+    .dot-closed { background: #888888; }
+    .status-menu-item:hover { background: var(--bg); }
+    .status-todo {
+      background: var(--label-bg);
+      color: var(--text-secondary);
+    }
+    .status-process {
+      background: rgba(255, 152, 0, 0.2);
+      color: #ff9800;
+    }
+    .status-review {
+      background: rgba(33, 150, 243, 0.2);
+      color: #2196f3;
+    }
+    .status-done {
+      background: rgba(76, 175, 80, 0.2);
+      color: #4caf50;
+    }
+    .status-init {
+      background: rgba(111, 66, 193, 0.15);
+      color: #8250df;
+    }
+    .status-bug {
+      background: rgba(197, 34, 31, 0.15);
+      color: var(--error-text);
+    }
+    .status-feature {
+      background: rgba(33, 150, 243, 0.15);
+      color: #2196f3;
+    }
+    .status-label {
+      background: var(--label-bg);
+      color: var(--text-secondary);
+    }
+    .comment-item {
+      padding: 10px 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 13px;
+    }
+    .comment-item:last-child {
+      border-bottom: none;
+    }
+    .comment-meta {
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-bottom: 4px;
+    }
+    .comment-body {
+      white-space: pre-wrap;
+      color: var(--text);
+    }
+    .copy-btn {
+      padding: 3px 5px;
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--text-secondary);
+      border-radius: 3px;
+      cursor: pointer;
+      line-height: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .copy-btn:hover {
+      background: var(--btn-secondary-bg);
+      color: var(--text);
+    }
+    .empty-state {
+      text-align: center;
+      padding: 60px 20px;
+      color: var(--text-muted);
+      font-size: 15px;
+    }
+    .overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.3);
+      z-index: 100;
+    }
+    .overlay.open {
+      display: block;
+    }
+    .settings-panel {
+      position: fixed;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      width: 320px;
+      background: var(--surface);
+      border-left: 1px solid var(--border);
+      z-index: 101;
+      display: flex;
+      flex-direction: column;
+      transform: translateX(100%);
+      transition: transform 0.25s ease;
+    }
+    .settings-panel.open {
+      transform: translateX(0);
+    }
+    .panel-header {
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .panel-header h2 {
+      font-size: 16px;
+      font-weight: 600;
+    }
+    .close-btn {
+      background: none;
+      border: none;
+      color: var(--text-secondary);
+      font-size: 18px;
+      cursor: pointer;
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+    .close-btn:hover {
+      background: var(--btn-secondary-bg);
+      color: var(--text);
+    }
+    .panel-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 20px;
+    }
+    .panel-section {
+      margin-bottom: 28px;
+    }
+    .panel-section h3 {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-secondary);
+      margin-bottom: 12px;
+    }
+    .panel-section > button {
+      width: 100%;
+      margin-top: 4px;
+    }
+    .form-group {
+      margin-bottom: 10px;
+    }
+    .form-group label {
+      display: block;
+      font-size: 13px;
+      font-weight: 500;
+      margin-bottom: 4px;
+    }
+    .form-group input,
+    .form-group select,
+    .form-group textarea {
+      width: 100%;
+      padding: 7px 10px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      font-size: 13px;
+      background: var(--surface);
+      color: var(--text);
+      font-family: inherit;
+    }
+    .form-group textarea {
+      resize: vertical;
+      min-height: 80px;
+    }
+    .form-group input:focus,
+    .form-group select:focus,
+    .form-group textarea:focus {
+      outline: none;
+      border-color: #0066cc;
+    }
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.4);
+      z-index: 200;
+      align-items: center;
+      justify-content: center;
+    }
+    .modal-overlay.open {
+      display: flex;
+    }
+    .modal-box {
+      background: var(--surface);
+      border-radius: 8px;
+      width: 440px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+    }
+    .modal-header {
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-weight: 600;
+    }
+    .modal-body {
+      padding: 20px;
+    }
+    .modal-body p {
+      font-size: 13px;
+      margin-bottom: 12px;
+      color: var(--text-secondary);
+    }
+    .modal-body p.warning {
+      color: var(--error-text);
+    }
+    .modal-footer {
+      padding: 12px 20px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="header-left">
+      <h1>Project Manager</h1>
+      <div class="project-dropdown" id="project-dropdown">
+        <button class="project-dropdown-btn" id="project-dropdown-btn">
+          <span id="project-dropdown-label" data-i18n="app.selectProject"></span>
+          <span class="arrow">▾</span>
+        </button>
+        <div class="project-dropdown-menu" id="project-dropdown-menu"></div>
+      </div>
+    </div>
+    <div class="controls">
+      <button id="add-issue-btn" data-i18n="app.addIssue"></button>
+      <button id="refresh-btn" class="secondary" data-i18n="app.refresh"></button>
+      <button id="settings-btn" class="secondary" data-i18n="app.settings"></button>
+    </div>
+  </div>
+  <div class="content">
+    <div id="message" class="message"></div>
+    <div id="issues-container"></div>
+  </div>
+  <div id="settings-overlay" class="overlay"></div>
+  <div id="settings-panel" class="settings-panel">
+    <div class="panel-header">
+      <h2 data-i18n="app.settings"></h2>
+      <button id="close-settings-btn" class="close-btn">✕</button>
+    </div>
+    <div class="panel-body">
+      <div class="panel-section">
+        <h3 data-i18n="settings.account"></h3>
+        <div class="form-group">
+          <label>GitHub Username</label>
+          <input type="text" id="settings-owner" placeholder="your-username">
+        </div>
+        <div class="form-group">
+          <label>Personal Access Token</label>
+          <input type="password" id="settings-token" placeholder="ghp_xxxxxxxxxxxx">
+        </div>
+        <button id="save-account-btn" data-i18n="settings.saveAccount"></button>
+        <div id="token-message" style="display: none; margin-top: 8px; font-size: 12px; color: #34a853;"></div>
+      </div>
+      <div class="panel-section">
+        <h3 data-i18n="settings.appearance"></h3>
+        <div class="form-group">
+          <label data-i18n="settings.theme"></label>
+          <select id="settings-theme">
+            <option value="system" data-i18n="settings.theme.system"></option>
+            <option value="light" data-i18n="settings.theme.light"></option>
+            <option value="dark" data-i18n="settings.theme.dark"></option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label data-i18n="settings.language"></label>
+          <select id="settings-language">
+            <option value="" data-i18n="settings.language.auto"></option>
+            <option value="en">English</option>
+            <option value="zh-TW">繁體中文</option>
+            <option value="ja">日本語</option>
+          </select>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div id="add-project-modal" class="modal-overlay">
+    <div class="modal-box">
+      <div class="modal-header">
+        <span data-i18n="project.add.title"></span>
+        <button class="close-btn" id="close-add-project-btn">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label data-i18n="project.add.name"></label>
+          <input type="text" id="modal-project-name" data-i18n-placeholder="project.add.namePlaceholder">
+        </div>
+        <div class="form-group">
+          <label data-i18n="project.add.repo"></label>
+          <input type="text" id="modal-project-repo" data-i18n-placeholder="project.add.repoPlaceholder">
+        </div>
+        <p id="add-project-error" style="display: none; font-size: 12px; color: var(--error-text); margin: 0;"></p>
+      </div>
+      <div class="modal-footer">
+        <button class="secondary" id="cancel-add-project-btn" data-i18n="modal.cancel"></button>
+        <button id="confirm-add-project-btn" data-i18n="modal.add"></button>
+      </div>
+    </div>
+  </div>
+  <div id="remove-project-modal" class="modal-overlay">
+    <div class="modal-box">
+      <div class="modal-header">
+        <span data-i18n="project.remove.title"></span>
+        <button class="close-btn" id="close-remove-project-btn">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="warning" data-i18n="project.remove.warning"></p>
+        <p id="remove-project-confirm-line"></p>
+        <div class="form-group" style="margin-top: 10px;">
+          <input type="text" id="remove-confirm-input" data-i18n-placeholder="project.remove.placeholder">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="secondary" id="cancel-remove-project-btn" data-i18n="modal.cancel"></button>
+        <button id="confirm-remove-project-btn" class="danger" disabled data-i18n="modal.confirmRemove"></button>
+      </div>
+    </div>
+  </div>
+  <div id="add-issue-modal" class="modal-overlay">
+    <div class="modal-box">
+      <div class="modal-header">
+        <span data-i18n="issue.add.title"></span>
+        <button class="close-btn" id="close-add-issue-btn">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label data-i18n="issue.add.titleField"></label>
+          <input type="text" id="issue-title" data-i18n-placeholder="issue.add.titlePlaceholder">
+        </div>
+        <div class="form-group">
+          <label data-i18n="issue.add.type"></label>
+          <select id="issue-type">
+            <option value="bug">Bug</option>
+            <option value="feature">Feature</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label data-i18n="issue.add.priority"></label>
+          <select id="add-issue-urgency">
+            <option value="">—</option>
+            <option value="Low">Low</option>
+            <option value="Medium">Medium</option>
+            <option value="High">High</option>
+            <option value="Urgent">Urgent</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label data-i18n="issue.add.body"></label>
+          <textarea id="issue-body" data-i18n-placeholder="issue.add.bodyPlaceholder"></textarea>
+        </div>
+        <div class="form-group">
+          <label data-i18n="issue.add.linkBranch"></label>
+          <input type="text" id="add-issue-branch" data-i18n-placeholder="issue.add.linkBranchPlaceholder" style="font-family: monospace;">
+          <p id="add-issue-branch-error" style="display: none; font-size: 12px; color: var(--error-text); margin-top: 4px;"></p>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="secondary" id="cancel-add-issue-btn" data-i18n="modal.cancel"></button>
+        <button id="confirm-add-issue-btn" data-i18n="issue.add.create"></button>
+      </div>
+    </div>
+  </div>
+  <div id="delete-issue-modal" class="modal-overlay" style="z-index: 300;">
+    <div class="modal-box">
+      <div class="modal-header">
+        <span data-i18n="issue.delete.title"></span>
+        <button class="close-btn" id="close-delete-issue-btn">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="warning" data-i18n="issue.delete.warning"></p>
+        <p id="delete-issue-name-hint"></p>
+        <p id="delete-issue-error" style="display: none; color: var(--error-text); font-size: 12px; margin-top: 8px;"></p>
+      </div>
+      <div class="modal-footer">
+        <button class="secondary" id="cancel-delete-issue-btn" data-i18n="modal.cancel"></button>
+        <button id="confirm-delete-issue-btn" class="danger" data-i18n="modal.confirmDelete"></button>
+      </div>
+    </div>
+  </div>
+  <div id="init-issue-modal" class="modal-overlay">
+    <div class="modal-box">
+      <div class="modal-header">
+        <span data-i18n="issue.init.title"></span>
+        <button class="close-btn" id="close-init-issue-btn">✕</button>
+      </div>
+      <div class="modal-body">
+        <p data-i18n="issue.init.intro"></p>
+        <div class="form-group">
+          <label data-i18n="issue.add.titleField"></label>
+          <input type="text" id="init-issue-title" data-i18n-placeholder="issue.init.titlePlaceholder">
+        </div>
+        <div class="form-group">
+          <label data-i18n="issue.add.body"></label>
+          <textarea id="init-issue-body" data-i18n-placeholder="issue.init.bodyPlaceholder"></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="secondary" id="cancel-init-issue-btn" data-i18n="modal.cancel"></button>
+        <button id="confirm-init-issue-btn" data-i18n="issue.add.create"></button>
+      </div>
+    </div>
+  </div>
+  <div id="issue-detail-modal" class="modal-overlay">
+    <div class="modal-box" style="width: 50vw; height: 50vh; display: flex; flex-direction: column;">
+      <div class="modal-header">
+        <div style="flex: 1; display: flex; align-items: center; gap: 6px; margin-right: 12px; min-width: 0;">
+          <span id="issue-detail-title" style="font-size: 15px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1;"></span>
+          <input id="issue-title-edit-input" type="text" style="display: none; flex: 1; font-size: 15px; font-weight: 600; padding: 2px 6px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface); color: var(--text); font-family: inherit;">
+          <button id="issue-title-edit-btn" class="copy-btn" data-i18n-title="issue.detail.editTitle" style="flex-shrink: 0;"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path></svg></button>
+          <button id="issue-title-save-btn" data-i18n="modal.save" style="display: none; padding: 3px 8px; font-size: 12px; flex-shrink: 0;"></button>
+          <button id="issue-title-cancel-btn" class="secondary" data-i18n="modal.cancel" style="display: none; padding: 3px 8px; font-size: 12px; flex-shrink: 0;"></button>
+        </div>
+        <button class="close-btn" id="close-issue-detail-btn">✕</button>
+      </div>
+      <div class="modal-body" style="flex: 1; overflow-y: auto;">
+        <div id="issue-draft-banner" style="display: none; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 10px; margin-bottom: 12px; background: rgba(128, 128, 128, 0.1); border: 1px solid var(--border); border-radius: 4px; font-size: 12px; color: var(--text);">
+          <span id="issue-draft-banner-text"></span>
+          <button id="issue-draft-discard-btn" class="secondary" data-i18n="issue.detail.discardDraft" style="padding: 2px 8px; font-size: 11px;"></button>
+        </div>
+        <div id="issue-detail-meta" style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px;"></div>
+        <div id="issue-link-branch-row" style="display: none; align-items: center; gap: 6px; margin-bottom: 14px;">
+          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink: 0; color: var(--text-secondary);"><line x1="6" y1="3" x2="6" y2="15"></line><circle cx="18" cy="6" r="3"></circle><circle cx="6" cy="18" r="3"></circle><path d="M18 9a9 9 0 0 1-9 9"></path></svg>
+          <input id="issue-link-branch-input" type="text" data-i18n-placeholder="issue.detail.linkBranchInputPlaceholder" style="flex: 1; padding: 3px 8px; font-size: 12px; font-family: monospace; border: 1px solid var(--border); border-radius: 4px; background: var(--surface); color: var(--text);">
+          <button id="issue-link-branch-save-btn" data-i18n="modal.link" style="padding: 3px 10px; font-size: 12px;"></button>
+          <button id="issue-link-branch-cancel-btn" class="secondary" data-i18n="modal.cancel" style="padding: 3px 10px; font-size: 12px;"></button>
+        </div>
+        <div style="margin-bottom: 14px;">
+          <button id="issue-detail-toggle-btn" class="secondary" style="font-size: 12px; padding: 4px 10px;"></button>
+        </div>
+        <div style="margin-bottom: 16px;">
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;">
+            <span style="font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-secondary);" data-i18n="issue.detail.body"></span>
+            <button id="issue-body-edit-btn" class="copy-btn" data-i18n-title="issue.detail.editBody"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path></svg></button>
+          </div>
+          <div id="issue-detail-body" style="font-size: 13px; color: var(--text-secondary); white-space: pre-wrap;"></div>
+          <textarea id="issue-body-edit-input" style="display: none; width: 100%; padding: 7px 10px; border: 1px solid var(--border); border-radius: 4px; font-size: 13px; background: var(--surface); color: var(--text); font-family: inherit; resize: vertical; min-height: 80px;" data-i18n-placeholder="issue.add.bodyPlaceholder"></textarea>
+          <div id="issue-body-edit-actions" style="display: none; justify-content: flex-end; gap: 8px; margin-top: 8px;">
+            <button id="issue-body-cancel-btn" class="secondary" data-i18n="modal.cancel"></button>
+            <button id="issue-body-save-btn" data-i18n="modal.save"></button>
+          </div>
+        </div>
+        <div style="border-top: 1px solid var(--border); padding-top: 16px;">
+          <div style="font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-secondary); margin-bottom: 12px;" data-i18n="issue.detail.comments"></div>
+          <div id="issue-detail-comments"></div>
+          <div style="position: relative; margin-top: 12px;">
+            <textarea id="issue-comment-input" data-i18n-placeholder="issue.detail.commentPlaceholder" style="min-height: 72px; width: 100%; padding-right: 44px; resize: vertical; background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 4px; font-size: 13px; font-family: inherit; padding-top: 7px; padding-left: 10px; box-sizing: border-box;"></textarea>
+            <button id="issue-comment-submit-btn" data-i18n-title="issue.detail.sendComment" style="position: absolute; bottom: 8px; right: 8px; width: 28px; height: 28px; border-radius: 6px; background: #2563eb; border: none; display: flex; align-items: center; justify-content: center; cursor: pointer; padding: 0; flex-shrink: 0;"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2" fill="white" stroke="none"></polygon></svg></button>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="issue-detail-delete-btn" class="danger" data-i18n="issue.detail.delete"></button>
+      </div>
+    </div>
+  </div>
+  <script src="theme.js"></script>
+  <script src="i18n.js"></script>
+  <script src="storage.js"></script>
+  <script src="github-api.js"></script>
+  <script src="settings.js"></script>
+  <script src="manager.js"></script>
+</body>
+</html>
