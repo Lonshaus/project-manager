@@ -538,6 +538,7 @@ class ProjectManager {
     document.getElementById('issue-type').value = 'bug';
     document.getElementById('issue-body').value = '';
     document.getElementById('add-issue-urgency').value = '';
+    document.getElementById('add-issue-linked-prs').value = '';
     document.getElementById('add-issue-modal').classList.add('open');
     document.getElementById('issue-title').focus();
   }
@@ -567,6 +568,11 @@ class ProjectManager {
     const type = document.getElementById('issue-type').value;
     const urgency = document.getElementById('add-issue-urgency').value;
     const body = document.getElementById('issue-body').value.trim();
+    // 解析使用者輸入的 PR 編號（逗號或空白分隔）
+    const linkedPRsRaw = document.getElementById('add-issue-linked-prs').value.trim();
+    const linkedPRs = linkedPRsRaw
+      ? linkedPRsRaw.split(/[\s,]+/).map(s => Number(s)).filter(n => Number.isInteger(n) && n > 0)
+      : [];
     if (!title) {
       return;
     }
@@ -578,12 +584,27 @@ class ProjectManager {
     btn.disabled = true;
     btn.textContent = t('state.creating');
     try {
+      // 連結 PR：先驗證所有 PR 都存在於 repo
+      if (linkedPRs.length > 0) {
+        const prs = await this.github.getPullRequests(project.owner, project.repo);
+        const missing = linkedPRs.filter(n => !prs.some(p => p.number === n));
+        if (missing.length > 0) {
+          this.showMessage(t('msg.prNotFound', { n: missing.join(', ') }), 'error');
+          btn.disabled = false;
+          btn.textContent = t('issue.add.create');
+          return;
+        }
+      }
       await this.ensureLabelsOnce(project.owner, project.repo);
       const labels = [type, 'status:todo'];
       if (urgency) {
         labels.push(`priority:${urgency.toLowerCase()}`);
       }
-      const issue = await this.github.createIssue(project.owner, project.repo, title, body, labels);
+      // 把 linkedPRs 寫進 issue body 的 pm-meta，建立時就帶上
+      const finalBody = linkedPRs.length > 0
+        ? this.buildIssueBody(body, { linkedPRs })
+        : body;
+      const issue = await this.github.createIssue(project.owner, project.repo, title, finalBody, labels);
       const pendingParent = this._pendingSubIssueParent;
       await this.storage.saveIssue({
         ...issue,
@@ -592,6 +613,7 @@ class ProjectManager {
         branchName: null,
         urgency: urgency || null,
         status: 'todo',
+        linkedPRs,
         parentNumber: pendingParent || null
       });
       // 若由「新增子任務」進入，建好後自動 link 到 parent
