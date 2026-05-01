@@ -1,0 +1,10 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <script>
+    chrome.tabs.create({ url: chrome.runtime.getURL('manager.html') + '?settings=open' });
+    window.close();
+  </script>
+</head>
+</html>
