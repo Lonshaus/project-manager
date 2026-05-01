@@ -564,6 +564,65 @@
       border-color: #0066cc;
       background: rgba(0, 102, 204, 0.04);
     }
+    .pr-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 8px;
+      border-radius: 10px;
+      background: var(--btn-secondary-bg);
+      border: 1px solid var(--border);
+      font-size: 11px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      color: var(--text);
+      text-decoration: none;
+    }
+    .pr-badge:hover {
+      border-color: #0066cc;
+      text-decoration: none;
+    }
+    .pr-badge .pr-state-dot {
+      display: inline-block;
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .pr-badge.pr-open .pr-state-dot { background: #4caf50; }
+    .pr-badge.pr-draft .pr-state-dot { background: var(--text-muted); border: 1px solid var(--text-secondary); background: transparent; }
+    .pr-badge.pr-merged .pr-state-dot { background: #8250df; }
+    .pr-badge.pr-closed .pr-state-dot { background: #c5221f; }
+    .pr-badge .pr-unlink-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      margin-left: 2px;
+      width: 14px;
+      height: 14px;
+      padding: 0;
+      border: none;
+      background: transparent;
+      color: var(--text-muted);
+      font-size: 13px;
+      line-height: 1;
+      cursor: pointer;
+    }
+    .pr-badge .pr-unlink-btn:hover {
+      color: var(--error-text);
+    }
+    #issue-link-pr-add-btn {
+      padding: 2px 8px;
+      font-size: 11px;
+      background: transparent;
+      border: 1px dashed var(--border);
+      color: var(--text-secondary);
+      border-radius: 10px;
+      cursor: pointer;
+    }
+    #issue-link-pr-add-btn:hover {
+      border-color: #0066cc;
+      color: #0066cc;
+    }
     .markdown-body {
       font-size: 13px;
       color: var(--text);
@@ -803,11 +862,6 @@
           <label data-i18n="issue.add.body"></label>
           <textarea id="issue-body" data-i18n-placeholder="issue.add.bodyPlaceholder"></textarea>
         </div>
-        <div class="form-group">
-          <label data-i18n="issue.add.linkBranch"></label>
-          <input type="text" id="add-issue-branch" data-i18n-placeholder="issue.add.linkBranchPlaceholder" style="font-family: monospace;">
-          <p id="add-issue-branch-error" style="display: none; font-size: 12px; color: var(--error-text); margin-top: 4px;"></p>
-        </div>
       </div>
       <div class="modal-footer">
         <button class="secondary" id="cancel-add-issue-btn" data-i18n="modal.cancel"></button>
@@ -873,11 +927,16 @@
           <button id="issue-draft-discard-btn" class="secondary" data-i18n="issue.detail.discardDraft" style="padding: 2px 8px; font-size: 11px;"></button>
         </div>
         <div id="issue-detail-meta" style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px;"></div>
-        <div id="issue-link-branch-row" style="display: none; align-items: center; gap: 6px; margin-bottom: 14px;">
-          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink: 0; color: var(--text-secondary);"><line x1="6" y1="3" x2="6" y2="15"></line><circle cx="18" cy="6" r="3"></circle><circle cx="6" cy="18" r="3"></circle><path d="M18 9a9 9 0 0 1-9 9"></path></svg>
-          <input id="issue-link-branch-input" type="text" data-i18n-placeholder="issue.detail.linkBranchInputPlaceholder" style="flex: 1; padding: 3px 8px; font-size: 12px; font-family: monospace; border: 1px solid var(--border); border-radius: 4px; background: var(--surface); color: var(--text);">
-          <button id="issue-link-branch-save-btn" data-i18n="modal.link" style="padding: 3px 10px; font-size: 12px;"></button>
-          <button id="issue-link-branch-cancel-btn" class="secondary" data-i18n="modal.cancel" style="padding: 3px 10px; font-size: 12px;"></button>
+        <div id="issue-linked-prs-section" style="margin-bottom: 14px;">
+          <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 6px;">
+            <span style="font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-secondary);" data-i18n="issue.detail.linkedPRs"></span>
+          </div>
+          <div id="issue-linked-prs" style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;"></div>
+          <div id="issue-link-pr-row" style="display: none; align-items: center; gap: 6px; margin-top: 6px;">
+            <input id="issue-link-pr-input" type="number" min="1" data-i18n-placeholder="issue.detail.linkPRInputPlaceholder" style="flex: 1; padding: 3px 8px; font-size: 12px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface); color: var(--text);">
+            <button id="issue-link-pr-save-btn" data-i18n="modal.link" style="padding: 3px 10px; font-size: 12px;"></button>
+            <button id="issue-link-pr-cancel-btn" class="secondary" data-i18n="modal.cancel" style="padding: 3px 10px; font-size: 12px;"></button>
+          </div>
         </div>
         <div id="issue-detail-state-actions" style="display: flex; gap: 8px; margin-bottom: 14px;"></div>
         <div style="margin-bottom: 16px;">

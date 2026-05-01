@@ -110,14 +110,14 @@ class ProjectManager {
         this.closeInitIssueModal();
       }
     });
-    document.getElementById('issue-link-branch-save-btn').addEventListener('click', () => this.saveBranchLink());
-    document.getElementById('issue-link-branch-cancel-btn').addEventListener('click', () => this.closeLinkBranchForm());
     document.getElementById('issue-draft-discard-btn').addEventListener('click', () => this.discardDraft());
-    document.getElementById('issue-link-branch-input').addEventListener('keydown', (e) => {
+    document.getElementById('issue-link-pr-save-btn').addEventListener('click', () => this.linkPR());
+    document.getElementById('issue-link-pr-cancel-btn').addEventListener('click', () => this.closeLinkPRForm());
+    document.getElementById('issue-link-pr-input').addEventListener('keydown', (e) => {
       if (e.key === 'Enter') {
-        this.saveBranchLink();
+        this.linkPR();
       } else if (e.key === 'Escape') {
-        this.closeLinkBranchForm();
+        this.closeLinkPRForm();
       }
     });
   }
@@ -259,13 +259,21 @@ class ProjectManager {
     return (body || '').replace(/\s*<!--\s*pm-meta:[^]*?-->\s*$/, '').trimEnd();
   }
   // 組合送回 GitHub 的 issue body：使用者內容 + pm-meta 註解
-  buildIssueBody(displayBody, branchName) {
+  // meta 包含 branch（legacy）與 linkedPRs（手動連結）；皆空時不寫 pm-meta
+  buildIssueBody(displayBody, { branchName, linkedPRs } = {}) {
     const cleaned = (displayBody || '').replace(/\s*<!--\s*pm-meta:[^]*?-->\s*$/, '').trimEnd();
-    if (!branchName) {
+    const meta = {};
+    if (branchName) {
+      meta.branch = branchName;
+    }
+    if (Array.isArray(linkedPRs) && linkedPRs.length > 0) {
+      meta.linkedPRs = linkedPRs;
+    }
+    if (Object.keys(meta).length === 0) {
       return cleaned;
     }
-    const meta = JSON.stringify({ branch: branchName });
-    return cleaned ? `${cleaned}\n\n<!-- pm-meta: ${meta} -->` : `<!-- pm-meta: ${meta} -->`;
+    const tag = `<!-- pm-meta: ${JSON.stringify(meta)} -->`;
+    return cleaned ? `${cleaned}\n\n${tag}` : tag;
   }
   // 在現有 labels 上替換 status:* / priority:* / cancel，保留其他（type 等）
   // cancelled === undefined 時不動 cancel 狀態（caller 沒指定就保留現狀）
@@ -461,23 +469,14 @@ class ProjectManager {
       }
       await this.github.createLabel(project.owner, project.repo, 'init', '6f42c1');
       await this.ensureLabelsOnce(project.owner, project.repo);
-      const randomNum = Math.floor(Math.random() * 9000) + 1000;
-      const branchName = `init-${randomNum}`;
-      const issueBody = this.buildIssueBody(body, branchName);
       const issue = await this.github.createIssue(
-        project.owner, project.repo, title, issueBody, ['init', 'status:todo']
+        project.owner, project.repo, title, body, ['init', 'status:todo']
       );
-      try {
-        const { sha } = await this.github.getDefaultBranchSHA(project.owner, project.repo);
-        await this.github.createBranch(project.owner, project.repo, branchName, sha);
-      } catch (branchErr) {
-        this.showMessage(t('msg.initIssueCreated', { msg: branchErr.message }), 'error');
-      }
       await this.storage.saveIssue({
         ...issue,
         id: `${project.id}_${issue.id}`,
         projectId: project.id,
-        branchName,
+        branchName: null,
         status: 'todo'
       });
       this.closeInitIssueModal();
@@ -527,8 +526,6 @@ class ProjectManager {
     document.getElementById('issue-title').value = '';
     document.getElementById('issue-type').value = 'bug';
     document.getElementById('issue-body').value = '';
-    document.getElementById('add-issue-branch').value = '';
-    document.getElementById('add-issue-branch-error').style.display = 'none';
     document.getElementById('add-issue-urgency').value = '';
     document.getElementById('add-issue-modal').classList.add('open');
     document.getElementById('issue-title').focus();
@@ -537,14 +534,13 @@ class ProjectManager {
   closeAddIssueModal() {
     document.getElementById('add-issue-modal').classList.remove('open');
   }
-  // 建立 issue 並在 GitHub 建立對應 branch，或連結指定的現有 branch
+  // 建立 issue。新機制：identifier 為 ${owner}-${issue.number}（用算的，不寫 pm-meta）
+  // 使用者用 identifier + dash 為前綴自己創 branch 與開 PR，extension 自動匹配
   async confirmAddIssue() {
     const title = document.getElementById('issue-title').value.trim();
     const type = document.getElementById('issue-type').value;
     const urgency = document.getElementById('add-issue-urgency').value;
     const body = document.getElementById('issue-body').value.trim();
-    const linkedBranch = document.getElementById('add-issue-branch').value.trim();
-    const branchErrorEl = document.getElementById('add-issue-branch-error');
     if (!title) {
       return;
     }
@@ -552,48 +548,21 @@ class ProjectManager {
     if (!project || !this.github) {
       return;
     }
-    if (linkedBranch) {
-      branchErrorEl.style.display = 'none';
-      try {
-        const exists = await this.github.branchExists(project.owner, project.repo, linkedBranch);
-        if (!exists) {
-          branchErrorEl.textContent = t('msg.branchNotFound', { name: linkedBranch });
-          branchErrorEl.style.display = 'block';
-          return;
-        }
-      } catch (err) {
-        branchErrorEl.textContent = t('msg.branchValidateFailed', { msg: err.message });
-        branchErrorEl.style.display = 'block';
-        return;
-      }
-    }
     const btn = document.getElementById('confirm-add-issue-btn');
     btn.disabled = true;
     btn.textContent = t('state.creating');
     try {
       await this.ensureLabelsOnce(project.owner, project.repo);
-      const randomNum = Math.floor(Math.random() * 9000) + 1000;
-      const autoBranchName = `${type}-${randomNum}`;
-      const branchName = linkedBranch || autoBranchName;
-      const issueBody = this.buildIssueBody(body, branchName);
       const labels = [type, 'status:todo'];
       if (urgency) {
         labels.push(`priority:${urgency.toLowerCase()}`);
       }
-      const issue = await this.github.createIssue(project.owner, project.repo, title, issueBody, labels);
-      if (!linkedBranch) {
-        try {
-          const { sha } = await this.github.getDefaultBranchSHA(project.owner, project.repo);
-          await this.github.createBranch(project.owner, project.repo, branchName, sha);
-        } catch (branchErr) {
-          this.showMessage(t('msg.initIssueCreated', { msg: branchErr.message }), 'error');
-        }
-      }
+      const issue = await this.github.createIssue(project.owner, project.repo, title, body, labels);
       await this.storage.saveIssue({
         ...issue,
         id: `${this.activeProjectId}_${issue.id}`,
         projectId: this.activeProjectId,
-        branchName,
+        branchName: null,
         urgency: urgency || null,
         status: 'todo'
       });
@@ -605,23 +574,56 @@ class ProjectManager {
     btn.disabled = false;
     btn.textContent = t('issue.add.create');
   }
-  // 從對應 PR 推算 status（只給 open issue 用）。回傳 null 表示找不到對應 PR 不覆寫
-  // PR merged 後 GitHub 自動關 issue，state=closed 即等於 Done，不再從這裡寫 status:done
-  computeIssueStatus(branchName, prs) {
-    if (!branchName) {
+  // 取得與 issue 連結的所有 PR（去重聯集三來源）：
+  // 1. identifier prefix 匹配（${owner}-${number}-...）
+  // 2. legacy branchName 精準匹配（舊 pm-meta 來源）
+  // 3. manual linkedPRs（pm-meta linkedPRs 陣列）
+  getLinkedPRs(issueNumber, legacyBranchName, manualLinkedPRs, prs, owner) {
+    if (!Array.isArray(prs)) {
+      return [];
+    }
+    const identifier = `${owner}-${issueNumber}`;
+    const seen = new Set();
+    const result = [];
+    const add = (pr) => {
+      if (pr && !seen.has(pr.number)) {
+        seen.add(pr.number);
+        result.push(pr);
+      }
+    };
+    for (const pr of prs) {
+      if (pr.head && pr.head.ref && pr.head.ref.startsWith(`${identifier}-`)) {
+        add(pr);
+      }
+    }
+    if (legacyBranchName) {
+      add(prs.find(p => p.head && p.head.ref === legacyBranchName));
+    }
+    if (Array.isArray(manualLinkedPRs)) {
+      for (const num of manualLinkedPRs) {
+        add(prs.find(p => p.number === num));
+      }
+    }
+    return result;
+  }
+  // 由 linked PR 集合聚合算 issue status：
+  // - 沒有 linked PR → null（不覆寫）
+  // - 全部 closed/merged → 'all-closed'（caller 自行決定是否 auto-close issue）
+  // - 任何 open 非 draft → 'review'
+  // - 全 open 都 draft → 'process'
+  computeIssueStatus(issueNumber, legacyBranchName, prs, owner, manualLinkedPRs) {
+    const linked = this.getLinkedPRs(issueNumber, legacyBranchName, manualLinkedPRs, prs, owner);
+    if (linked.length === 0) {
       return null;
     }
-    const pr = prs.find(p => p.head.ref === branchName);
-    if (!pr) {
-      return null;
+    const open = linked.filter(p => p.state === 'open');
+    if (open.length === 0) {
+      return 'all-closed';
     }
-    if (pr.state === 'open' && pr.draft) {
+    if (open.every(p => p.draft)) {
       return 'process';
     }
-    if (pr.state === 'open') {
-      return 'review';
-    }
-    return null;
+    return 'review';
   }
   // 將 status key 轉換為顯示文字與 CSS class（回傳 [label, cssClass]）
   statusDisplay(status) {
@@ -753,15 +755,28 @@ class ProjectManager {
       let status = parsed.status || cachedIssue?.status || null;
       const branchName = parsed.branchName || cachedIssue?.branchName || null;
       const urgency = parsed.urgency || cachedIssue?.urgency || null;
+      const linkedPRs = parsed.linkedPRs && parsed.linkedPRs.length ? parsed.linkedPRs : (cachedIssue?.linkedPRs || []);
       let needsRerender = false;
       if (cachedIssue && cachedIssue.state !== issue.state) {
         await this.storage.patchIssue(cachedIssue.id, { state: issue.state });
         needsRerender = true;
       }
       // 自動 status 只給 open issue 用（closed → Done/Cancel 已由 state 決定）
-      if (prs && branchName && issue.state === 'open') {
-        const autoStatus = this.computeIssueStatus(branchName, prs);
-        if (autoStatus !== null && autoStatus !== status) {
+      if (prs && issue.state === 'open') {
+        const autoStatus = this.computeIssueStatus(issue.number, branchName, prs, project.owner, linkedPRs);
+        if (autoStatus === 'all-closed') {
+          // 所有 linked PR 都關了 → 自動關 issue（state=closed → Done）
+          try {
+            const updated = await this.github.updateIssue(project.owner, project.repo, issueNumber, { state: 'closed' });
+            issue.state = updated.state;
+            if (cachedIssue) {
+              await this.storage.patchIssue(cachedIssue.id, { state: 'closed' });
+            }
+            needsRerender = true;
+          } catch (e) {
+            // 失敗就保持 open
+          }
+        } else if (autoStatus !== null && autoStatus !== status) {
           status = autoStatus;
           // 推到 GitHub label，避免本地與 GitHub 不一致
           try {
@@ -785,9 +800,12 @@ class ProjectManager {
         branchName,
         urgency,
         status,
+        linkedPRs,
         id: cachedIssue?.id || issue.id
       };
       this._detailIssue = baseIssue;
+      // 把當下的 PR 清單 cache 起來，給 renderLinkedPRs 用
+      this._detailPRs = prs || [];
       // 載入該 issue 在 IndexedDB 的草稿（若存在），覆蓋顯示用值
       const savedDraft = await this.storage.getDraft(this.activeProjectId, issueNumber);
       this._draftSavedAt = null;
@@ -888,7 +906,7 @@ class ProjectManager {
     this._detailComments = comments;
     this.cancelTitleEditMode();
     this.cancelBodyEditMode();
-    this.closeLinkBranchForm();
+    this.closeLinkPRForm();
     // 草稿提示橫幅：僅當有從 IndexedDB 載入的舊 draft 時顯示
     const banner = document.getElementById('issue-draft-banner');
     if (this._draftSavedAt) {
@@ -908,21 +926,26 @@ class ProjectManager {
     document.getElementById('issue-detail-title').textContent = issue.title;
     const iconClipboard = `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>`;
     const iconBranch = `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="15"></line><circle cx="18" cy="6" r="3"></circle><circle cx="6" cy="18" r="3"></circle><path d="M18 9a9 9 0 0 1-9 9"></path></svg>`;
-    const branchPart = issue.branchName ? `
+    // identifier 用算的：${owner}-${issue.number}，使用者用此前綴 + dash 自己創 branch
+    const identifier = this._detailProject ? `${this._detailProject.owner}-${issue.number}` : null;
+    const identifierPart = identifier ? `
       <span style="display: inline-flex; align-items: center; gap: 4px; color: var(--text-muted); font-size: 12px; margin-left: 4px;">
         ${iconBranch}
-        <span id="issue-branch-display" style="font-family: monospace;">${issue.branchName}</span>
-        <button id="copy-branch-btn" class="copy-btn" title="${t('issue.detail.copyBranch')}">${iconClipboard}</button>
+        <span id="issue-identifier-display" style="font-family: monospace;">${identifier}</span>
+        <button id="copy-identifier-btn" class="copy-btn" title="${t('issue.detail.copyIdentifier')}">${iconClipboard}</button>
       </span>` : '';
-    const statusDropdown = issue.branchName ? `
+    // status dropdown 一律顯示，包含 Done 選項；Cancel 仍由獨立按鈕觸發
+    const currentStatusKey = issue.state === 'closed'
+      ? (issue.cancelled ? 'cancel' : 'done')
+      : (issue.status || 'todo');
+    const statusDropdown = `
       <div style="position: relative; display: inline-flex;">
         <button id="issue-status-dropdown-btn" style="display: inline-flex; align-items: center; gap: 5px; padding: 2px 7px; background: var(--btn-secondary-bg); border: 1px solid var(--border); border-radius: 10px; font-size: 11px; color: var(--text); cursor: pointer; font-family: inherit;">
-          <span class="status-dot ${this.statusDotClass(issue.status || 'todo')}" id="issue-status-dot"></span>
+          <span class="status-dot ${this.statusDotClass(currentStatusKey)}" id="issue-status-dot"></span>
           <span style="font-size: 9px; opacity: 0.5;">▾</span>
         </button>
         <div id="issue-status-dropdown-menu" style="display: none; position: absolute; top: calc(100% + 4px); left: 0; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 4px 16px rgba(0,0,0,0.15); z-index: 250; overflow: hidden; min-width: 130px;"></div>
-      </div>` : '';
-    const linkBranchBtn = !issue.branchName ? `<button id="link-branch-btn" class="copy-btn" title="${t('issue.detail.linkBranch')}" style="display: inline-flex; align-items: center; gap: 4px; padding: 2px 7px; border: 1px dashed var(--border); border-radius: 10px; font-size: 11px; color: var(--text-secondary);">${iconBranch} ＋</button>` : '';
+      </div>`;
     const urgencyBtnContent = issue.urgency
       ? this.urgencyIcon(issue.urgency)
       : `<span style="font-size: 11px; color: var(--text-secondary);">Priority</span>`;
@@ -930,40 +953,37 @@ class ProjectManager {
       <button id="issue-urgency-dropdown-btn" style="display: inline-flex; align-items: center; gap: 4px; padding: 2px 7px; background: var(--btn-secondary-bg); border: 1px solid var(--border); border-radius: 10px; cursor: pointer; font-family: inherit;">${urgencyBtnContent}<span style="font-size: 9px; opacity: 0.5; color: var(--text);">▾</span></button>
       <div id="issue-urgency-dropdown-menu" style="display: none; position: absolute; top: calc(100% + 4px); left: 0; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 4px 16px rgba(0,0,0,0.15); z-index: 250; overflow: hidden; min-width: 110px;"></div>
     </div>`;
-    document.getElementById('issue-detail-meta').innerHTML = `${labels}${statusDropdown}${urgencyDropdown}${branchPart}${linkBranchBtn}`;
+    document.getElementById('issue-detail-meta').innerHTML = `${labels}${statusDropdown}${urgencyDropdown}${identifierPart}`;
+    this.renderLinkedPRs(issue);
     this.renderStateActions(issue);
-    if (issue.branchName) {
-      document.getElementById('issue-status-dropdown-btn').addEventListener('click', (e) => {
-        e.stopPropagation();
-        const menu = document.getElementById('issue-status-dropdown-menu');
-        menu.style.display = menu.style.display === 'none' ? '' : 'none';
-      });
-      document.getElementById('copy-branch-btn').addEventListener('click', () => this.copyBranchName());
-      const statuses = [
-        { key: 'todo', label: 'Todo' },
-        { key: 'process', label: 'In Progress' },
-        { key: 'review', label: 'In Review' }
-      ];
-      const statusMenu = document.getElementById('issue-status-dropdown-menu');
-      statusMenu.innerHTML = statuses.map(s =>
-        `<div class="status-menu-item" data-value="${s.key}" style="display: flex; align-items: center; gap: 8px; padding: 8px 12px; font-size: 12px; cursor: pointer; color: var(--text);">
-          <span class="status-dot ${this.statusDotClass(s.key)}"></span>
-          <span>${s.label}</span>
-        </div>`
-      ).join('');
-      statusMenu.querySelectorAll('.status-menu-item').forEach(el => {
-        el.addEventListener('click', (e) => {
-          e.stopPropagation();
-          this.updateLocalStatus(el.dataset.value);
-          this.closeStatusDropdown();
-        });
-      });
-    } else {
-      document.getElementById('link-branch-btn').addEventListener('click', () => {
-        document.getElementById('issue-link-branch-row').style.display = 'flex';
-        document.getElementById('issue-link-branch-input').focus();
-      });
+    if (identifier) {
+      document.getElementById('copy-identifier-btn').addEventListener('click', () => this.copyIdentifier());
     }
+    document.getElementById('issue-status-dropdown-btn').addEventListener('click', (e) => {
+      e.stopPropagation();
+      const menu = document.getElementById('issue-status-dropdown-menu');
+      menu.style.display = menu.style.display === 'none' ? '' : 'none';
+    });
+    const statuses = [
+      { key: 'todo', label: 'Todo' },
+      { key: 'process', label: 'In Progress' },
+      { key: 'review', label: 'In Review' },
+      { key: 'done', label: 'Done' }
+    ];
+    const statusMenu = document.getElementById('issue-status-dropdown-menu');
+    statusMenu.innerHTML = statuses.map(s =>
+      `<div class="status-menu-item" data-value="${s.key}" style="display: flex; align-items: center; gap: 8px; padding: 8px 12px; font-size: 12px; cursor: pointer; color: var(--text);">
+        <span class="status-dot ${this.statusDotClass(s.key)}"></span>
+        <span>${s.label}</span>
+      </div>`
+    ).join('');
+    statusMenu.querySelectorAll('.status-menu-item').forEach(el => {
+      el.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.updateLocalStatus(el.dataset.value);
+        this.closeStatusDropdown();
+      });
+    });
     document.getElementById('issue-urgency-dropdown-btn').addEventListener('click', (e) => {
       e.stopPropagation();
       const menu = document.getElementById('issue-urgency-dropdown-menu');
@@ -1012,14 +1032,14 @@ class ProjectManager {
       }).join('');
     }
   }
-  // 複製 branch 名稱到剪貼簿，並短暫以打勾 icon 回饋
-  async copyBranchName() {
-    const name = document.getElementById('issue-branch-display').textContent;
-    if (!name) {
+  // 複製 identifier 到剪貼簿，並短暫以打勾 icon 回饋
+  async copyIdentifier() {
+    const text = document.getElementById('issue-identifier-display').textContent;
+    if (!text) {
       return;
     }
-    await navigator.clipboard.writeText(name);
-    const btn = document.getElementById('copy-branch-btn');
+    await navigator.clipboard.writeText(text);
+    const btn = document.getElementById('copy-identifier-btn');
     const iconClipboard = `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>`;
     const iconCheck = `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
     btn.innerHTML = iconCheck;
@@ -1045,16 +1065,18 @@ class ProjectManager {
     }
     const draft = this._detailDraft || {};
     const branchName = 'branchName' in draft ? draft.branchName : issue.branchName;
+    const linkedPRs = 'linkedPRs' in draft ? draft.linkedPRs : (issue.linkedPRs || []);
     const displayBody = 'body' in draft ? draft.body : this.displayBody(issue.body);
     return {
       ...issue,
       title: 'title' in draft ? draft.title : issue.title,
-      body: this.buildIssueBody(displayBody, branchName),
+      body: this.buildIssueBody(displayBody, { branchName, linkedPRs }),
       state: 'state' in draft ? draft.state : issue.state,
       status: 'status' in draft ? draft.status : issue.status,
       urgency: 'urgency' in draft ? draft.urgency : issue.urgency,
       cancelled: 'cancelled' in draft ? draft.cancelled : !!issue.cancelled,
-      branchName
+      branchName,
+      linkedPRs
     };
   }
   // 用目前 draft 重新渲染 detail modal
@@ -1096,10 +1118,11 @@ class ProjectManager {
     if ('state' in draft) {
       patch.state = draft.state;
     }
-    if ('body' in draft || 'branchName' in draft) {
+    if ('body' in draft || 'branchName' in draft || 'linkedPRs' in draft) {
       const displayBody = 'body' in draft ? draft.body : this.displayBody(issue.body);
       const branchName = 'branchName' in draft ? draft.branchName : issue.branchName;
-      patch.body = this.buildIssueBody(displayBody, branchName);
+      const linkedPRs = 'linkedPRs' in draft ? draft.linkedPRs : (issue.linkedPRs || []);
+      patch.body = this.buildIssueBody(displayBody, { branchName, linkedPRs });
     }
     const labelsChanged = 'status' in draft || 'urgency' in draft || 'cancelled' in draft;
     const finalStatus = 'status' in draft ? draft.status : issue.status;
@@ -1140,6 +1163,9 @@ class ProjectManager {
         }
         if ('cancelled' in draft) {
           localPatch.cancelled = draft.cancelled;
+        }
+        if ('linkedPRs' in draft) {
+          localPatch.linkedPRs = draft.linkedPRs;
         }
         if (Object.keys(localPatch).length > 0) {
           await this.storage.patchIssue(match.id, localPatch);
@@ -1204,47 +1230,6 @@ class ProjectManager {
     const day = Math.floor(hr / 24);
     return t('time.dayAgo', { n: day });
   }
-  // 收起 branch 連結輸入列並清空
-  closeLinkBranchForm() {
-    const row = document.getElementById('issue-link-branch-row');
-    if (row) {
-      row.style.display = 'none';
-    }
-    const input = document.getElementById('issue-link-branch-input');
-    if (input) {
-      input.value = '';
-    }
-  }
-  // 將輸入的 branch 名稱寫入本地 storage 並重新渲染（儲存前先驗證 branch 存在）
-  async saveBranchLink() {
-    const input = document.getElementById('issue-link-branch-input');
-    const branchName = input.value.trim();
-    if (!branchName || !this._detailIssue || !this._detailProject || !this.github) {
-      return;
-    }
-    const btn = document.getElementById('issue-link-branch-save-btn');
-    btn.disabled = true;
-    btn.textContent = t('state.validating');
-    try {
-      const exists = await this.github.branchExists(
-        this._detailProject.owner, this._detailProject.repo, branchName
-      );
-      if (!exists) {
-        this.showMessage(t('msg.branchNotFound', { name: branchName }), 'error');
-        btn.disabled = false;
-        btn.textContent = t('modal.link');
-        return;
-      }
-      // branch 驗證成功後寫入 draft，由 commit 階段送 GitHub
-      this._detailDraft.branchName = branchName;
-      this.closeLinkBranchForm();
-      this.refreshDetailFromDraft();
-    } catch (error) {
-      this.showMessage(t('msg.linkFailed', { msg: error.message }), 'error');
-      btn.disabled = false;
-      btn.textContent = t('modal.link');
-    }
-  }
   // 更新 issue 緊急度到 draft
   updateUrgency(newUrgency) {
     if (!this._detailIssue) {
@@ -1253,45 +1238,152 @@ class ProjectManager {
     this._detailDraft.urgency = newUrgency || null;
     this.refreshDetailFromDraft();
   }
-  // 更新 issue 進度到 draft
+  // 更新 issue 進度到 draft：todo/process/review 等於 open，done 等於 closed 且非 cancel
   updateLocalStatus(newStatus) {
     if (!this._detailIssue) {
       return;
     }
-    this._detailDraft.status = newStatus;
-    const dot = document.getElementById('issue-status-dot');
-    if (dot) {
-      dot.className = `status-dot ${this.statusDotClass(newStatus)}`;
+    if (newStatus === 'done') {
+      this._detailDraft.state = 'closed';
+      this._detailDraft.cancelled = false;
+    } else {
+      this._detailDraft.state = 'open';
+      this._detailDraft.cancelled = false;
+      this._detailDraft.status = newStatus;
+    }
+    this.refreshDetailFromDraft();
+  }
+  // 渲染 Linked PRs 區塊：badge 連到 GitHub PR 頁、手動連結的可移除、最後加 + Link PR 按鈕
+  renderLinkedPRs(issue) {
+    const container = document.getElementById('issue-linked-prs');
+    if (!container || !this._detailProject) {
+      return;
+    }
+    const owner = this._detailProject.owner;
+    const repo = this._detailProject.repo;
+    const linked = this.getLinkedPRs(
+      issue.number, issue.branchName, issue.linkedPRs, this._detailPRs || [], owner
+    );
+    const manualSet = new Set(issue.linkedPRs || []);
+    const stateClass = (pr) => {
+      if (pr.state === 'closed' && pr.merged_at) {
+        return 'pr-merged';
+      }
+      if (pr.state === 'closed') {
+        return 'pr-closed';
+      }
+      if (pr.draft) {
+        return 'pr-draft';
+      }
+      return 'pr-open';
+    };
+    const badges = linked.map(pr => {
+      const cls = stateClass(pr);
+      const url = `https://github.com/${owner}/${repo}/pull/${pr.number}`;
+      const isManual = manualSet.has(pr.number);
+      const unlinkBtn = isManual
+        ? `<button class="pr-unlink-btn" data-pr-number="${pr.number}" title="${t('issue.detail.unlinkPR')}">×</button>`
+        : '';
+      return `<a href="${url}" target="_blank" rel="noopener noreferrer" class="pr-badge ${cls}"><span class="pr-state-dot"></span><span>#${pr.number}</span></a>${unlinkBtn}`;
+    }).join('');
+    const addBtn = `<button id="issue-link-pr-add-btn">＋ ${t('issue.detail.linkPR')}</button>`;
+    container.innerHTML = badges + addBtn;
+    container.querySelectorAll('.pr-unlink-btn').forEach(el => {
+      el.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        this.unlinkPR(Number(el.dataset.prNumber));
+      });
+    });
+    document.getElementById('issue-link-pr-add-btn').addEventListener('click', () => this.openLinkPRForm());
+  }
+  // 顯示連結 PR 輸入框
+  openLinkPRForm() {
+    const row = document.getElementById('issue-link-pr-row');
+    if (!row) {
+      return;
+    }
+    const input = document.getElementById('issue-link-pr-input');
+    input.value = '';
+    row.style.display = 'flex';
+    input.focus();
+  }
+  // 隱藏連結 PR 輸入框
+  closeLinkPRForm() {
+    const row = document.getElementById('issue-link-pr-row');
+    if (row) {
+      row.style.display = 'none';
+    }
+    const input = document.getElementById('issue-link-pr-input');
+    if (input) {
+      input.value = '';
     }
   }
-  // 渲染 state 操作按鈕區（依 state 顯示不同按鈕組）
+  // 手動連結 PR：驗證 PR 存在後寫入 _detailDraft.linkedPRs
+  async linkPR() {
+    if (!this._detailIssue || !this._detailProject || !this.github) {
+      return;
+    }
+    const input = document.getElementById('issue-link-pr-input');
+    const num = Number(input.value);
+    if (!Number.isInteger(num) || num <= 0) {
+      return;
+    }
+    const btn = document.getElementById('issue-link-pr-save-btn');
+    btn.disabled = true;
+    btn.textContent = t('state.validating');
+    try {
+      // 透過 PR list 驗證存在（避免額外加 API method）
+      const prs = this._detailPRs || [];
+      const exists = prs.some(p => p.number === num);
+      if (!exists) {
+        this.showMessage(t('msg.prNotFound', { n: num }), 'error');
+        btn.disabled = false;
+        btn.textContent = t('modal.link');
+        return;
+      }
+      const merged = this.mergedDetailIssue();
+      const current = merged.linkedPRs || [];
+      if (current.includes(num)) {
+        this.closeLinkPRForm();
+        btn.disabled = false;
+        btn.textContent = t('modal.link');
+        return;
+      }
+      this._detailDraft.linkedPRs = [...current, num];
+      this.closeLinkPRForm();
+      this.refreshDetailFromDraft();
+    } catch (e) {
+      this.showMessage(t('msg.linkFailed', { msg: e.message }), 'error');
+      btn.disabled = false;
+      btn.textContent = t('modal.link');
+    }
+  }
+  // 取消手動連結 PR
+  unlinkPR(prNumber) {
+    if (!this._detailIssue) {
+      return;
+    }
+    const merged = this.mergedDetailIssue();
+    const current = merged.linkedPRs || [];
+    const next = current.filter(n => n !== prNumber);
+    this._detailDraft.linkedPRs = next;
+    this.refreshDetailFromDraft();
+  }
+  // 渲染 state 操作按鈕區：只剩 Cancel 按鈕，且只在尚未 cancel 時顯示
   renderStateActions(issue) {
     const container = document.getElementById('issue-detail-state-actions');
     if (!container) {
       return;
     }
-    if (issue.state === 'open') {
-      container.innerHTML = `
-        <button id="issue-mark-done-btn" class="secondary" style="font-size: 12px; padding: 4px 10px;">${t('issue.detail.markDone')}</button>
-        <button id="issue-mark-cancel-btn" class="secondary" style="font-size: 12px; padding: 4px 10px;">${t('issue.detail.markCancel')}</button>
-      `;
-      container.querySelector('#issue-mark-done-btn').addEventListener('click', () => this.markDone());
-      container.querySelector('#issue-mark-cancel-btn').addEventListener('click', () => this.markCancelled());
-    } else {
-      container.innerHTML = `
-        <button id="issue-reopen-btn" class="secondary" style="font-size: 12px; padding: 4px 10px;">${t('issue.detail.reopen')}</button>
-      `;
-      container.querySelector('#issue-reopen-btn').addEventListener('click', () => this.reopenIssue());
-    }
-  }
-  // 標記為完成：closed state，無 cancel label
-  markDone() {
-    if (!this._detailIssue) {
+    if (issue.cancelled) {
+      container.innerHTML = '';
       return;
     }
-    this._detailDraft.state = 'closed';
-    this._detailDraft.cancelled = false;
-    this.refreshDetailFromDraft();
+    container.innerHTML = `
+      <button id="issue-mark-cancel-btn" class="secondary" style="font-size: 12px; padding: 4px 10px;">${t('issue.detail.markCancel')}</button>
+    `;
+    container.querySelector('#issue-mark-cancel-btn').addEventListener('click', () => this.markCancelled());
   }
   // 標記為取消：closed state + cancel label
   markCancelled() {
@@ -1300,16 +1392,6 @@ class ProjectManager {
     }
     this._detailDraft.state = 'closed';
     this._detailDraft.cancelled = true;
-    this.refreshDetailFromDraft();
-  }
-  // 重新開啟：state 回 open、清掉 cancel、status 重設為 todo
-  reopenIssue() {
-    if (!this._detailIssue) {
-      return;
-    }
-    this._detailDraft.state = 'open';
-    this._detailDraft.cancelled = false;
-    this._detailDraft.status = 'todo';
     this.refreshDetailFromDraft();
   }
   // 開啟刪除 issue 確認 modal
@@ -1399,11 +1481,19 @@ class ProjectManager {
       await this.storage.saveProjectIssues(this.activeProjectId, issues);
       const cached = await this.storage.getIssuesByProject(this.activeProjectId);
       for (const ci of cached) {
-        if (!ci.branchName || ci.state !== 'open') {
+        if (ci.state !== 'open') {
           continue;
         }
-        const autoStatus = this.computeIssueStatus(ci.branchName, prs);
-        if (autoStatus !== null && autoStatus !== ci.status) {
+        const autoStatus = this.computeIssueStatus(ci.number, ci.branchName, prs, project.owner, ci.linkedPRs);
+        if (autoStatus === 'all-closed') {
+          // 所有 linked PR 都關了 → 自動關 issue（→ Done）
+          try {
+            await this.github.updateIssue(project.owner, project.repo, ci.number, { state: 'closed' });
+            await this.storage.patchIssue(ci.id, { state: 'closed' });
+          } catch (e) {
+            // 失敗就保留 open
+          }
+        } else if (autoStatus !== null && autoStatus !== ci.status) {
           // 同步把新 status 推到 GitHub label，避免本地與 GitHub 不一致
           try {
             const newLabels = this.buildIssueLabels(ci.labels, { status: autoStatus, urgency: ci.urgency });
