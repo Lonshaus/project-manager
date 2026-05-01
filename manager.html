@@ -312,6 +312,40 @@
       border-radius: 12px;
       font-size: 11px;
     }
+    .issue-parent-badge {
+      padding: 2px 6px;
+      background-color: var(--label-bg);
+      border-radius: 10px;
+      font-size: 10px;
+      font-family: monospace;
+      color: var(--text-muted);
+    }
+    .issue-sub-progress {
+      position: relative;
+      margin-top: 6px;
+      height: 14px;
+      background: var(--label-bg);
+      border-radius: 7px;
+      overflow: hidden;
+    }
+    .issue-sub-progress-bar {
+      height: 100%;
+      background: #4caf50;
+      transition: width 0.2s;
+    }
+    .issue-sub-progress-text {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 10px;
+      color: var(--text);
+      font-family: monospace;
+    }
     .status-badge {
       padding: 2px 8px;
       border-radius: 10px;
@@ -620,6 +654,91 @@
       cursor: pointer;
     }
     #issue-link-pr-add-btn:hover {
+      border-color: #0066cc;
+      color: #0066cc;
+    }
+    #issue-add-sub-issue-add-btn {
+      padding: 2px 8px;
+      font-size: 11px;
+      background: transparent;
+      border: 1px dashed var(--border);
+      color: var(--text-secondary);
+      border-radius: 10px;
+      cursor: pointer;
+      align-self: flex-start;
+      margin-top: 4px;
+    }
+    #issue-add-sub-issue-add-btn:hover {
+      border-color: #0066cc;
+      color: #0066cc;
+    }
+    .sub-issue-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 8px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--btn-secondary-bg);
+    }
+    .sub-issue-row .sub-issue-link {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: var(--text);
+      cursor: pointer;
+    }
+    .sub-issue-row .sub-issue-link:hover {
+      color: #0066cc;
+    }
+    .sub-issue-row .sub-issue-num {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      color: var(--text-muted);
+      flex-shrink: 0;
+    }
+    .sub-issue-row .sub-issue-title {
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .sub-issue-row .sub-issue-state {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .sub-issue-row.state-open .sub-issue-state { background: #4caf50; }
+    .sub-issue-row.state-closed .sub-issue-state { background: var(--text-muted); }
+    .sub-issue-row .sub-issue-unlink {
+      width: 16px;
+      height: 16px;
+      padding: 0;
+      border: none;
+      background: transparent;
+      color: var(--text-muted);
+      font-size: 14px;
+      line-height: 1;
+      cursor: pointer;
+    }
+    .sub-issue-row .sub-issue-unlink:hover {
+      color: var(--error-text);
+    }
+    #issue-parent-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 6px;
+      background: var(--btn-secondary-bg);
+      border: 1px solid var(--border);
+      font-size: 12px;
+      cursor: pointer;
+      color: var(--text);
+    }
+    #issue-parent-link:hover {
       border-color: #0066cc;
       color: #0066cc;
     }
@@ -936,6 +1055,23 @@
             <input id="issue-link-pr-input" type="number" min="1" data-i18n-placeholder="issue.detail.linkPRInputPlaceholder" style="flex: 1; padding: 3px 8px; font-size: 12px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface); color: var(--text);">
             <button id="issue-link-pr-save-btn" data-i18n="modal.link" style="padding: 3px 10px; font-size: 12px;"></button>
             <button id="issue-link-pr-cancel-btn" class="secondary" data-i18n="modal.cancel" style="padding: 3px 10px; font-size: 12px;"></button>
+          </div>
+        </div>
+        <div id="issue-parent-section" style="display: none; margin-bottom: 14px;">
+          <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 6px;">
+            <span style="font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-secondary);" data-i18n="issue.detail.parent"></span>
+          </div>
+          <div id="issue-parent-link"></div>
+        </div>
+        <div id="issue-sub-issues-section" style="margin-bottom: 14px;">
+          <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 6px;">
+            <span style="font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-secondary);" data-i18n="issue.detail.subIssues"></span>
+          </div>
+          <div id="issue-sub-issues" style="display: flex; flex-direction: column; gap: 4px;"></div>
+          <div id="issue-add-sub-issue-row" style="display: none; align-items: center; gap: 6px; margin-top: 6px;">
+            <input id="issue-add-sub-issue-input" type="number" min="1" data-i18n-placeholder="issue.detail.subIssueInputPlaceholder" style="flex: 1; padding: 3px 8px; font-size: 12px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface); color: var(--text);">
+            <button id="issue-add-sub-issue-save-btn" data-i18n="modal.link" style="padding: 3px 10px; font-size: 12px;"></button>
+            <button id="issue-add-sub-issue-cancel-btn" class="secondary" data-i18n="modal.cancel" style="padding: 3px 10px; font-size: 12px;"></button>
           </div>
         </div>
         <div id="issue-detail-state-actions" style="display: flex; gap: 8px; margin-bottom: 14px;"></div>

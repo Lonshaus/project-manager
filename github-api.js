@@ -110,6 +110,62 @@ class GitHubAPI {
       throw new Error(data.errors[0].message);
     }
   }
+  // 列出指定 issue 的所有 sub-issues
+  async listSubIssues(owner, repo, parentNumber) {
+    const response = await fetch(
+      `${this.baseURL}/repos/${owner}/${repo}/issues/${parentNumber}/sub_issues?per_page=100`,
+      {
+        headers: {
+          'Authorization': `token ${this.token}`,
+          'Accept': 'application/vnd.github.v3+json'
+        }
+      }
+    );
+    if (!response.ok) {
+      throw new Error(`GitHub API error: ${response.status}`);
+    }
+    return response.json();
+  }
+  // 將 child issue 加為 parent 的 sub-issue（subIssueId 為 GitHub issue 的 id 而非 number）
+  async addSubIssue(owner, repo, parentNumber, subIssueId) {
+    const response = await fetch(
+      `${this.baseURL}/repos/${owner}/${repo}/issues/${parentNumber}/sub_issues`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `token ${this.token}`,
+          'Accept': 'application/vnd.github.v3+json'
+        },
+        body: JSON.stringify({ sub_issue_id: subIssueId })
+      }
+    );
+    if (!response.ok) {
+      const text = await response.text();
+      const err = new Error(`GitHub API error: ${response.status}`);
+      err.status = response.status;
+      err.body = text;
+      throw err;
+    }
+    return response.json();
+  }
+  // 從 parent 移除指定 sub-issue
+  async removeSubIssue(owner, repo, parentNumber, subIssueId) {
+    const response = await fetch(
+      `${this.baseURL}/repos/${owner}/${repo}/issues/${parentNumber}/sub_issue`,
+      {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `token ${this.token}`,
+          'Accept': 'application/vnd.github.v3+json'
+        },
+        body: JSON.stringify({ sub_issue_id: subIssueId })
+      }
+    );
+    if (!response.ok) {
+      throw new Error(`GitHub API error: ${response.status}`);
+    }
+    return response.json();
+  }
   // 取得 repo 的所有 PR（含已關閉與已合併）
   async getPullRequests(owner, repo) {
     const response = await fetch(

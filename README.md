@@ -23,6 +23,18 @@
   - 選 Done → state=closed 且不帶 cancel label
   - Cancel 仍由獨立按鈕觸發（state=closed + cancel label）
 - 自動同步狀態到 GitHub label（避免本地與遠端不一致）
+- 欄位內排序：
+  - **Todo / In Progress / In Review**：先依緊急度 desc（Urgent > High > Medium > Low > 無），同級再依 `updated_at` desc
+  - **Done / Canceled**：依 `closed_at` desc（fallback `updated_at`）
+
+### Sub-issues
+- 整合 GitHub 原生 sub-issue 關係（`/issues/{n}/sub_issues` API），不寫進 pm-meta
+- Detail modal 顯示兩個區塊：Parent（child issue 才顯示）與 Sub-issues（任何 issue 都可有）
+- Parent issue 的 card 顯示 `{完成}/{總數}` 進度條；child issue 的 card 顯示 `↳ #N` parent badge
+- 加入 sub-issue：在 detail modal 點「＋ Add Sub-issue」輸入 issue number；移除：列表項旁 `×`
+- 動作直接呼叫 GitHub API（不走 draft），成功後同步本地快取與看板
+- 限制：100 children、巢狀深度 8 層、一個 child 只能有一個 parent、不支援跨 repo
+- **不**自動關 parent（與 linkedPRs auto-close 區分；parent 可能有自己的 PR）
 
 ### Issue 編輯（Draft 機制）
 - 修改 title、body、status、緊急度、開關狀態 → 寫入 in-memory draft，**不立即送 API**
@@ -83,6 +95,7 @@ GitHub 為唯一真相來源，沒有任何 metadata 只存在本地：
 | 緊急度 | GitHub Label | `priority:{level}` |
 | Issue ↔ PR 自動連結 | 純算 + branch 命名約定 | `pr.head.ref.startsWith('${owner}-${number}-')` |
 | Issue ↔ PR 手動連結 | Issue body 結尾隱藏註解 | `<!-- pm-meta: {"linkedPRs":[14,15]} -->` |
+| Sub-issue parent/child | GitHub sub-issue API | `sub_issues_summary` + `/issues/{n}/sub_issues` |
 | 留言 | GitHub Issue Comments | 原生 |
 
 這個設計的好處：重新安裝擴充功能、換瀏覽器、清除本地資料 → 只要重整一次就能完全還原所有元資料，無需匯入匯出，也無需在 issue body 寫任何隱藏 metadata。

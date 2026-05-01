@@ -120,6 +120,15 @@ class ProjectManager {
         this.closeLinkPRForm();
       }
     });
+    document.getElementById('issue-add-sub-issue-save-btn').addEventListener('click', () => this.addSubIssue());
+    document.getElementById('issue-add-sub-issue-cancel-btn').addEventListener('click', () => this.closeAddSubIssueForm());
+    document.getElementById('issue-add-sub-issue-input').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        this.addSubIssue();
+      } else if (e.key === 'Escape') {
+        this.closeAddSubIssueForm();
+      }
+    });
   }
   // 從 chrome.storage 重新讀取設定並重新渲染頁面
   async reload() {
@@ -415,6 +424,7 @@ class ProjectManager {
         // 一次同步全部 issues（含剛建立的 init 或既有的 init），用標準 sync 邏輯解析 labels/body
         const refreshed = hasInit ? existingIssues : await this.github.getIssues(project.owner, project.repo);
         await this.storage.saveProjectIssues(project.id, refreshed);
+        await this.loadSubIssueGraph(project);
       } catch (e) {
         this.showMessage(t('msg.initIssueFailed', { msg: e.message }), 'error');
       }
@@ -690,6 +700,19 @@ class ProjectManager {
           grouped[key].push(issue);
         }
       });
+      // 排序：open 欄依緊急度 desc + updated_at desc；closed 欄依 closed_at desc
+      const urgencyRank = { Urgent: 4, High: 3, Medium: 2, Low: 1 };
+      const byUrgencyThenUpdated = (a, b) => {
+        const ru = (urgencyRank[b.urgency] || 0) - (urgencyRank[a.urgency] || 0);
+        if (ru !== 0) {
+          return ru;
+        }
+        return new Date(b.updated_at || 0) - new Date(a.updated_at || 0);
+      };
+      const byClosedDesc = (a, b) =>
+        new Date(b.closed_at || b.updated_at || 0) - new Date(a.closed_at || a.updated_at || 0);
+      ['todo', 'process', 'review', 'other'].forEach(k => grouped[k].sort(byUrgencyThenUpdated));
+      ['done', 'cancel'].forEach(k => grouped[k].sort(byClosedDesc));
       const hasOther = grouped.other.length > 0;
       const allColumns = hasOther ? [...columns, { key: 'other', label: t('column.other') }] : columns;
       const colDotClass = { todo: 'dot-todo', process: 'dot-process', review: 'dot-review', done: 'dot-done', cancel: 'dot-closed', other: 'dot-closed' };
@@ -720,9 +743,22 @@ class ProjectManager {
     const badge = this.typeBadge(issue.labels);
     const urgency = issue.urgency ? this.urgencyIcon(issue.urgency) : '';
     const draftAttr = hasDraft ? ` data-unsaved-label="${t('issue.detail.unsavedBadge')}"` : '';
+    const parentBadge = issue.parentNumber
+      ? `<span class="issue-parent-badge" title="${t('issue.detail.parent')}">↳ #${issue.parentNumber}</span>`
+      : '';
+    const total = issue.subIssuesSummary?.total || 0;
+    const completed = issue.subIssuesSummary?.completed || 0;
+    const percent = total > 0 ? Math.round((completed / total) * 100) : 0;
+    const subProgress = total > 0
+      ? `<div class="issue-sub-progress" title="${t('issue.detail.subIssueProgress', { completed, total })}">
+          <div class="issue-sub-progress-bar" style="width: ${percent}%;"></div>
+          <span class="issue-sub-progress-text">${completed}/${total}</span>
+        </div>`
+      : '';
     return `<div class="issue-item${hasDraft ? ' has-draft' : ''}" data-issue-number="${issue.number}"${draftAttr}>
       <div class="issue-title" style="display: flex; align-items: center; gap: 5px;">${issue.title}${urgency}</div>
-      <div class="issue-meta">${badge}</div>
+      <div class="issue-meta">${badge}${parentBadge}</div>
+      ${subProgress}
     </div>`;
   }
   // 開啟 issue 詳情 modal，同步從 GitHub 讀取最新資料並與本地快取合併
@@ -801,6 +837,9 @@ class ProjectManager {
         urgency,
         status,
         linkedPRs,
+        // sub-issue 親子關係由 GitHub API 維護，不走 pm-meta；從本地 cache 讀回顯示
+        parentNumber: cachedIssue?.parentNumber || null,
+        subIssuesSummary: issue.sub_issues_summary || cachedIssue?.subIssuesSummary || null,
         id: cachedIssue?.id || issue.id
       };
       this._detailIssue = baseIssue;
@@ -907,6 +946,7 @@ class ProjectManager {
     this.cancelTitleEditMode();
     this.cancelBodyEditMode();
     this.closeLinkPRForm();
+    this.closeAddSubIssueForm();
     // 草稿提示橫幅：僅當有從 IndexedDB 載入的舊 draft 時顯示
     const banner = document.getElementById('issue-draft-banner');
     if (this._draftSavedAt) {
@@ -955,6 +995,8 @@ class ProjectManager {
     </div>`;
     document.getElementById('issue-detail-meta').innerHTML = `${labels}${statusDropdown}${urgencyDropdown}${identifierPart}`;
     this.renderLinkedPRs(issue);
+    // renderSubIssues 載入完 cache 後會接著呼叫 renderParentSection，避免 parent 標題抓不到
+    this.renderSubIssues(issue);
     this.renderStateActions(issue);
     if (identifier) {
       document.getElementById('copy-identifier-btn').addEventListener('click', () => this.copyIdentifier());
@@ -1370,6 +1412,193 @@ class ProjectManager {
     this._detailDraft.linkedPRs = next;
     this.refreshDetailFromDraft();
   }
+  // 渲染 Parent 區塊：本 issue 是 child 才顯示，點擊切換 detail modal
+  renderParentSection(issue) {
+    const section = document.getElementById('issue-parent-section');
+    const link = document.getElementById('issue-parent-link');
+    if (!section || !link) {
+      return;
+    }
+    if (!issue.parentNumber) {
+      section.style.display = 'none';
+      link.innerHTML = '';
+      return;
+    }
+    section.style.display = '';
+    // 從本地快取找 parent 標題
+    const parentNumber = issue.parentNumber;
+    const cached = this._cachedIssuesForDetail || [];
+    const parent = cached.find(c => c.number === parentNumber);
+    const title = parent ? parent.title : '';
+    link.innerHTML = `<span style="font-family: monospace;">#${parentNumber}</span><span>${title}</span>`;
+    link.onclick = () => this.openIssueDetail(parentNumber);
+  }
+  // 渲染 Sub-issues 區塊：列出 children + 加入按鈕
+  async renderSubIssues(issue) {
+    const container = document.getElementById('issue-sub-issues');
+    if (!container || !this._detailProject) {
+      return;
+    }
+    // 從本地 cache 找子 issue（parentNumber === issue.number）
+    const cached = await this.storage.getIssuesByProject(this.activeProjectId);
+    this._cachedIssuesForDetail = cached;
+    const children = cached.filter(c => c.parentNumber === issue.number);
+    const rows = children.map(c => {
+      const stateClass = c.state === 'open' ? 'state-open' : 'state-closed';
+      return `<div class="sub-issue-row ${stateClass}" data-issue-number="${c.number}">
+        <span class="sub-issue-state"></span>
+        <span class="sub-issue-link" data-issue-number="${c.number}">
+          <span class="sub-issue-num">#${c.number}</span>
+          <span class="sub-issue-title">${c.title}</span>
+        </span>
+        <button class="sub-issue-unlink" data-issue-number="${c.number}" title="${t('issue.detail.unlinkSubIssue')}">×</button>
+      </div>`;
+    }).join('');
+    const addBtn = `<button id="issue-add-sub-issue-add-btn">＋ ${t('issue.detail.addSubIssue')}</button>`;
+    container.innerHTML = rows + addBtn;
+    container.querySelectorAll('.sub-issue-link').forEach(el => {
+      el.addEventListener('click', () => this.openIssueDetail(Number(el.dataset.issueNumber)));
+    });
+    container.querySelectorAll('.sub-issue-unlink').forEach(el => {
+      el.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.unlinkSubIssue(Number(el.dataset.issueNumber));
+      });
+    });
+    document.getElementById('issue-add-sub-issue-add-btn').addEventListener('click', () => this.openAddSubIssueForm());
+    // 重渲染 parent section 用相同的 cache，避免另外打 API
+    this.renderParentSection(issue);
+  }
+  // 顯示加入 sub-issue 輸入框
+  openAddSubIssueForm() {
+    const row = document.getElementById('issue-add-sub-issue-row');
+    if (!row) {
+      return;
+    }
+    const input = document.getElementById('issue-add-sub-issue-input');
+    input.value = '';
+    row.style.display = 'flex';
+    input.focus();
+  }
+  // 隱藏輸入框
+  closeAddSubIssueForm() {
+    const row = document.getElementById('issue-add-sub-issue-row');
+    if (row) {
+      row.style.display = 'none';
+    }
+    const input = document.getElementById('issue-add-sub-issue-input');
+    if (input) {
+      input.value = '';
+    }
+  }
+  // 加入 sub-issue：直接呼叫 GitHub API（非 draft），成功後同步本地快取與 UI
+  async addSubIssue() {
+    if (!this._detailIssue || !this._detailProject || !this.github) {
+      return;
+    }
+    const input = document.getElementById('issue-add-sub-issue-input');
+    const num = Number(input.value);
+    if (!Number.isInteger(num) || num <= 0) {
+      return;
+    }
+    const parentNumber = this._detailIssue.number;
+    if (num === parentNumber) {
+      this.showMessage(t('msg.subIssueSelfRef'), 'error');
+      return;
+    }
+    const cached = await this.storage.getIssuesByProject(this.activeProjectId);
+    const target = cached.find(c => c.number === num);
+    if (!target) {
+      this.showMessage(t('msg.subIssueNotFound', { n: num }), 'error');
+      return;
+    }
+    if (target.parentNumber === parentNumber) {
+      // 已是本 issue 的 child，直接關閉輸入框
+      this.closeAddSubIssueForm();
+      return;
+    }
+    if (target.parentNumber) {
+      this.showMessage(t('msg.subIssueAlreadyHasParent', { n: num }), 'error');
+      return;
+    }
+    const project = this._detailProject;
+    const btn = document.getElementById('issue-add-sub-issue-save-btn');
+    btn.disabled = true;
+    btn.textContent = t('state.validating');
+    try {
+      // target.id 是 storage 加 prefix 後的字串，原始 GitHub id 在 raw 物件上沒 cached
+      // 改抓單一 issue 取得 GitHub id（更精確）
+      const fresh = await this.github.getIssue(project.owner, project.repo, num);
+      await this.github.addSubIssue(project.owner, project.repo, parentNumber, fresh.id);
+      // 更新本地：child 的 parentNumber + parent 的 subIssuesSummary
+      await this.storage.patchIssue(target.id, { parentNumber });
+      const parentCached = cached.find(c => c.number === parentNumber);
+      if (parentCached) {
+        const total = (parentCached.subIssuesSummary?.total || 0) + 1;
+        const completed = (parentCached.subIssuesSummary?.completed || 0) + (fresh.state === 'closed' ? 1 : 0);
+        await this.storage.patchIssue(parentCached.id, {
+          subIssuesSummary: { total, completed, percent_completed: Math.round((completed / total) * 100) }
+        });
+        if (this._detailIssue) {
+          this._detailIssue.subIssuesSummary = { total, completed, percent_completed: Math.round((completed / total) * 100) };
+        }
+      }
+      this.closeAddSubIssueForm();
+      await this.renderSubIssues(this._detailIssue);
+      await this.renderIssues();
+    } catch (e) {
+      const text = (e.body || e.message || '').toLowerCase();
+      let msg;
+      if (text.includes('limit') || text.includes('100')) {
+        msg = t('msg.subIssueLimitReached');
+      } else if (text.includes('depth')) {
+        msg = t('msg.subIssueDepthLimit');
+      } else if (text.includes('parent')) {
+        msg = t('msg.subIssueAlreadyHasParent', { n: num });
+      } else if (text.includes('repo') || text.includes('cross')) {
+        msg = t('msg.subIssueCrossRepoUnsupported');
+      } else {
+        msg = t('msg.subIssueAddFailed', { msg: e.message || 'unknown' });
+      }
+      this.showMessage(msg, 'error');
+    }
+    btn.disabled = false;
+    btn.textContent = t('modal.link');
+  }
+  // 移除 sub-issue：呼叫 GitHub API，成功後同步本地
+  async unlinkSubIssue(childNumber) {
+    if (!this._detailIssue || !this._detailProject || !this.github) {
+      return;
+    }
+    const project = this._detailProject;
+    const parentNumber = this._detailIssue.number;
+    try {
+      const fresh = await this.github.getIssue(project.owner, project.repo, childNumber);
+      await this.github.removeSubIssue(project.owner, project.repo, parentNumber, fresh.id);
+      const cached = await this.storage.getIssuesByProject(this.activeProjectId);
+      const child = cached.find(c => c.number === childNumber);
+      if (child) {
+        await this.storage.patchIssue(child.id, { parentNumber: null });
+      }
+      const parentCached = cached.find(c => c.number === parentNumber);
+      if (parentCached && parentCached.subIssuesSummary) {
+        const total = Math.max(0, (parentCached.subIssuesSummary.total || 0) - 1);
+        const wasClosed = fresh.state === 'closed';
+        const completed = Math.max(0, (parentCached.subIssuesSummary.completed || 0) - (wasClosed ? 1 : 0));
+        const summary = total > 0
+          ? { total, completed, percent_completed: Math.round((completed / total) * 100) }
+          : null;
+        await this.storage.patchIssue(parentCached.id, { subIssuesSummary: summary });
+        if (this._detailIssue) {
+          this._detailIssue.subIssuesSummary = summary;
+        }
+      }
+      await this.renderSubIssues(this._detailIssue);
+      await this.renderIssues();
+    } catch (e) {
+      this.showMessage(t('msg.subIssueAddFailed', { msg: e.message || 'unknown' }), 'error');
+    }
+  }
   // 渲染 state 操作按鈕區：只剩 Cancel 按鈕，且只在尚未 cancel 時顯示
   renderStateActions(issue) {
     const container = document.getElementById('issue-detail-state-actions');
@@ -1462,6 +1691,24 @@ class ProjectManager {
     btn.style.opacity = '';
   }
   // 從 GitHub 同步最新 issues，並依 PR 狀態自動更新進度
+  // 對每個有 sub_issues 的 parent 查 sub-issues 列表，把 child→parent 的對映回填到本地快取
+  async loadSubIssueGraph(project) {
+    const cached = await this.storage.getIssuesByProject(project.id);
+    const parents = cached.filter(c => (c.subIssuesSummary?.total || 0) > 0);
+    for (const parent of parents) {
+      try {
+        const subs = await this.github.listSubIssues(project.owner, project.repo, parent.number);
+        for (const sub of subs) {
+          const match = cached.find(c => c.number === sub.number);
+          if (match) {
+            await this.storage.patchIssue(match.id, { parentNumber: parent.number });
+          }
+        }
+      } catch (e) {
+        // 單一 parent 查詢失敗就跳過，不影響整體 sync
+      }
+    }
+  }
   async onRefreshClick() {
     if (!this.github || !this.activeProjectId) {
       return;
@@ -1479,6 +1726,7 @@ class ProjectManager {
         this.github.getPullRequests(project.owner, project.repo)
       ]);
       await this.storage.saveProjectIssues(this.activeProjectId, issues);
+      await this.loadSubIssueGraph(project);
       const cached = await this.storage.getIssuesByProject(this.activeProjectId);
       for (const ci of cached) {
         if (ci.state !== 'open') {
