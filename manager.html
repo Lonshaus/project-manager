@@ -662,7 +662,12 @@
       border-color: #0066cc;
       color: #0066cc;
     }
-    #issue-add-sub-issue-add-btn {
+    .sub-issue-actions {
+      display: flex;
+      gap: 6px;
+      margin-top: 4px;
+    }
+    .sub-issue-actions button {
       padding: 2px 8px;
       font-size: 11px;
       background: transparent;
@@ -670,10 +675,8 @@
       color: var(--text-secondary);
       border-radius: 10px;
       cursor: pointer;
-      align-self: flex-start;
-      margin-top: 4px;
     }
-    #issue-add-sub-issue-add-btn:hover {
+    .sub-issue-actions button:hover {
       border-color: #0066cc;
       color: #0066cc;
     }

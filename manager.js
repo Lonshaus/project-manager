@@ -533,6 +533,7 @@ class ProjectManager {
   }
   // 開啟新增 issue modal
   openAddIssueModal() {
+    this._pendingSubIssueParent = null;
     document.getElementById('issue-title').value = '';
     document.getElementById('issue-type').value = 'bug';
     document.getElementById('issue-body').value = '';
@@ -540,9 +541,24 @@ class ProjectManager {
     document.getElementById('add-issue-modal').classList.add('open');
     document.getElementById('issue-title').focus();
   }
+  // 從 detail modal 點「新增子任務」進入：開 add-issue modal 並記住 parent，建好之後自動 link
+  openNewSubIssueModal() {
+    if (!this._detailIssue) {
+      return;
+    }
+    const parentNumber = this._detailIssue.number;
+    this.openAddIssueModal();
+    // detail modal 已經是 200，把 add-issue modal 提到更上層才不會被蓋住
+    document.getElementById('add-issue-modal').style.zIndex = '250';
+    this._pendingSubIssueParent = parentNumber;
+  }
   // 關閉新增 issue modal
   closeAddIssueModal() {
-    document.getElementById('add-issue-modal').classList.remove('open');
+    this._pendingSubIssueParent = null;
+    const modal = document.getElementById('add-issue-modal');
+    modal.classList.remove('open');
+    // 還原走「新增子任務」流程時臨時調高的 z-index
+    modal.style.zIndex = '';
   }
   // 建立 issue。新機制：identifier 為 ${owner}-${issue.number}（用算的，不寫 pm-meta）
   // 使用者用 identifier + dash 為前綴自己創 branch 與開 PR，extension 自動匹配
@@ -568,16 +584,43 @@ class ProjectManager {
         labels.push(`priority:${urgency.toLowerCase()}`);
       }
       const issue = await this.github.createIssue(project.owner, project.repo, title, body, labels);
+      const pendingParent = this._pendingSubIssueParent;
       await this.storage.saveIssue({
         ...issue,
         id: `${this.activeProjectId}_${issue.id}`,
         projectId: this.activeProjectId,
         branchName: null,
         urgency: urgency || null,
-        status: 'todo'
+        status: 'todo',
+        parentNumber: pendingParent || null
       });
+      // 若由「新增子任務」進入，建好後自動 link 到 parent
+      if (pendingParent) {
+        try {
+          await this.github.addSubIssue(project.owner, project.repo, pendingParent, issue.id);
+          // 更新 parent 的 subIssuesSummary
+          const cached = await this.storage.getIssuesByProject(this.activeProjectId);
+          const parentCached = cached.find(c => c.number === pendingParent);
+          if (parentCached) {
+            const total = (parentCached.subIssuesSummary?.total || 0) + 1;
+            const completed = parentCached.subIssuesSummary?.completed || 0;
+            const summary = { total, completed, percent_completed: Math.round((completed / total) * 100) };
+            await this.storage.patchIssue(parentCached.id, { subIssuesSummary: summary });
+            if (this._detailIssue && this._detailIssue.number === pendingParent) {
+              this._detailIssue.subIssuesSummary = summary;
+            }
+          }
+        } catch (e) {
+          this.showMessage(t('msg.subIssueAddFailed', { msg: e.message || 'unknown' }), 'error');
+        }
+      }
+      this._pendingSubIssueParent = null;
       this.closeAddIssueModal();
       await this.renderIssues();
+      // 若處於 sub-issue 流程，重新渲染 parent 的子任務區塊
+      if (pendingParent && this._detailIssue && this._detailIssue.number === pendingParent) {
+        await this.renderSubIssues(this._detailIssue);
+      }
     } catch (error) {
       this.showMessage(t('msg.createIssueFailed', { msg: error.message }), 'error');
     }
@@ -1464,8 +1507,11 @@ class ProjectManager {
         <button class="sub-issue-unlink" data-issue-number="${c.number}" title="${t('issue.detail.unlinkSubIssue')}">×</button>
       </div>`;
     }).join('');
-    const addBtn = `<button id="issue-add-sub-issue-add-btn">＋ ${t('issue.detail.addSubIssue')}</button>`;
-    container.innerHTML = rows + addBtn;
+    const buttons = `<div class="sub-issue-actions">
+      <button id="issue-new-sub-issue-btn">＋ ${t('issue.detail.newSubIssue')}</button>
+      <button id="issue-link-sub-issue-btn">＋ ${t('issue.detail.linkSubIssue')}</button>
+    </div>`;
+    container.innerHTML = rows + buttons;
     container.querySelectorAll('.sub-issue-link').forEach(el => {
       el.addEventListener('click', () => this.openIssueDetail(Number(el.dataset.issueNumber)));
     });
@@ -1475,7 +1521,8 @@ class ProjectManager {
         this.unlinkSubIssue(Number(el.dataset.issueNumber));
       });
     });
-    document.getElementById('issue-add-sub-issue-add-btn').addEventListener('click', () => this.openAddSubIssueForm());
+    document.getElementById('issue-new-sub-issue-btn').addEventListener('click', () => this.openNewSubIssueModal());
+    document.getElementById('issue-link-sub-issue-btn').addEventListener('click', () => this.openAddSubIssueForm());
     // 重渲染 parent section 用相同的 cache，避免另外打 API
     this.renderParentSection(issue);
   }
