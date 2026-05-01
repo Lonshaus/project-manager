@@ -591,8 +591,10 @@ class ProjectManager {
         result.push(pr);
       }
     };
+    // GitHub username case-insensitive，但 git ref case-sensitive；統一 lowercase 比對避免漏連
+    const idPrefix = `${identifier}-`.toLowerCase();
     for (const pr of prs) {
-      if (pr.head && pr.head.ref && pr.head.ref.startsWith(`${identifier}-`)) {
+      if (pr.head && pr.head.ref && pr.head.ref.toLowerCase().startsWith(idPrefix)) {
         add(pr);
       }
     }
