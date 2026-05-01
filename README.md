@@ -18,6 +18,10 @@
   - 任何 open 非 draft → review
   - 全 open 都是 draft → process
   - **全部 closed/merged → 自動 PATCH issue state=closed → Done**
+- 手動切換 status：detail modal 的 status dropdown 提供 Todo / In Progress / In Review / Done 四個選項
+  - 選 Todo / In Progress / In Review → state=open（若原本已關閉則自動 reopen）
+  - 選 Done → state=closed 且不帶 cancel label
+  - Cancel 仍由獨立按鈕觸發（state=closed + cancel label）
 - 自動同步狀態到 GitHub label（避免本地與遠端不一致）
 
 ### Issue 編輯（Draft 機制）

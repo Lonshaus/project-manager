@@ -934,15 +934,18 @@ class ProjectManager {
         <span id="issue-identifier-display" style="font-family: monospace;">${identifier}</span>
         <button id="copy-identifier-btn" class="copy-btn" title="${t('issue.detail.copyIdentifier')}">${iconClipboard}</button>
       </span>` : '';
-    // status dropdown 只在 open issue 顯示（closed → state 決定 done/cancel）
-    const statusDropdown = issue.state === 'open' ? `
+    // status dropdown 一律顯示，包含 Done 選項；Cancel 仍由獨立按鈕觸發
+    const currentStatusKey = issue.state === 'closed'
+      ? (issue.cancelled ? 'cancel' : 'done')
+      : (issue.status || 'todo');
+    const statusDropdown = `
       <div style="position: relative; display: inline-flex;">
         <button id="issue-status-dropdown-btn" style="display: inline-flex; align-items: center; gap: 5px; padding: 2px 7px; background: var(--btn-secondary-bg); border: 1px solid var(--border); border-radius: 10px; font-size: 11px; color: var(--text); cursor: pointer; font-family: inherit;">
-          <span class="status-dot ${this.statusDotClass(issue.status || 'todo')}" id="issue-status-dot"></span>
+          <span class="status-dot ${this.statusDotClass(currentStatusKey)}" id="issue-status-dot"></span>
           <span style="font-size: 9px; opacity: 0.5;">▾</span>
         </button>
         <div id="issue-status-dropdown-menu" style="display: none; position: absolute; top: calc(100% + 4px); left: 0; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 4px 16px rgba(0,0,0,0.15); z-index: 250; overflow: hidden; min-width: 130px;"></div>
-      </div>` : '';
+      </div>`;
     const urgencyBtnContent = issue.urgency
       ? this.urgencyIcon(issue.urgency)
       : `<span style="font-size: 11px; color: var(--text-secondary);">Priority</span>`;
@@ -956,32 +959,31 @@ class ProjectManager {
     if (identifier) {
       document.getElementById('copy-identifier-btn').addEventListener('click', () => this.copyIdentifier());
     }
-    if (issue.state === 'open') {
-      document.getElementById('issue-status-dropdown-btn').addEventListener('click', (e) => {
+    document.getElementById('issue-status-dropdown-btn').addEventListener('click', (e) => {
+      e.stopPropagation();
+      const menu = document.getElementById('issue-status-dropdown-menu');
+      menu.style.display = menu.style.display === 'none' ? '' : 'none';
+    });
+    const statuses = [
+      { key: 'todo', label: 'Todo' },
+      { key: 'process', label: 'In Progress' },
+      { key: 'review', label: 'In Review' },
+      { key: 'done', label: 'Done' }
+    ];
+    const statusMenu = document.getElementById('issue-status-dropdown-menu');
+    statusMenu.innerHTML = statuses.map(s =>
+      `<div class="status-menu-item" data-value="${s.key}" style="display: flex; align-items: center; gap: 8px; padding: 8px 12px; font-size: 12px; cursor: pointer; color: var(--text);">
+        <span class="status-dot ${this.statusDotClass(s.key)}"></span>
+        <span>${s.label}</span>
+      </div>`
+    ).join('');
+    statusMenu.querySelectorAll('.status-menu-item').forEach(el => {
+      el.addEventListener('click', (e) => {
         e.stopPropagation();
-        const menu = document.getElementById('issue-status-dropdown-menu');
-        menu.style.display = menu.style.display === 'none' ? '' : 'none';
+        this.updateLocalStatus(el.dataset.value);
+        this.closeStatusDropdown();
       });
-      const statuses = [
-        { key: 'todo', label: 'Todo' },
-        { key: 'process', label: 'In Progress' },
-        { key: 'review', label: 'In Review' }
-      ];
-      const statusMenu = document.getElementById('issue-status-dropdown-menu');
-      statusMenu.innerHTML = statuses.map(s =>
-        `<div class="status-menu-item" data-value="${s.key}" style="display: flex; align-items: center; gap: 8px; padding: 8px 12px; font-size: 12px; cursor: pointer; color: var(--text);">
-          <span class="status-dot ${this.statusDotClass(s.key)}"></span>
-          <span>${s.label}</span>
-        </div>`
-      ).join('');
-      statusMenu.querySelectorAll('.status-menu-item').forEach(el => {
-        el.addEventListener('click', (e) => {
-          e.stopPropagation();
-          this.updateLocalStatus(el.dataset.value);
-          this.closeStatusDropdown();
-        });
-      });
-    }
+    });
     document.getElementById('issue-urgency-dropdown-btn').addEventListener('click', (e) => {
       e.stopPropagation();
       const menu = document.getElementById('issue-urgency-dropdown-menu');
@@ -1236,16 +1238,20 @@ class ProjectManager {
     this._detailDraft.urgency = newUrgency || null;
     this.refreshDetailFromDraft();
   }
-  // 更新 issue 進度到 draft
+  // 更新 issue 進度到 draft：todo/process/review 等於 open，done 等於 closed 且非 cancel
   updateLocalStatus(newStatus) {
     if (!this._detailIssue) {
       return;
     }
-    this._detailDraft.status = newStatus;
-    const dot = document.getElementById('issue-status-dot');
-    if (dot) {
-      dot.className = `status-dot ${this.statusDotClass(newStatus)}`;
+    if (newStatus === 'done') {
+      this._detailDraft.state = 'closed';
+      this._detailDraft.cancelled = false;
+    } else {
+      this._detailDraft.state = 'open';
+      this._detailDraft.cancelled = false;
+      this._detailDraft.status = newStatus;
     }
+    this.refreshDetailFromDraft();
   }
   // 渲染 Linked PRs 區塊：badge 連到 GitHub PR 頁、手動連結的可移除、最後加 + Link PR 按鈕
   renderLinkedPRs(issue) {
@@ -1364,34 +1370,20 @@ class ProjectManager {
     this._detailDraft.linkedPRs = next;
     this.refreshDetailFromDraft();
   }
-  // 渲染 state 操作按鈕區（依 state 顯示不同按鈕組）
+  // 渲染 state 操作按鈕區：只剩 Cancel 按鈕，且只在尚未 cancel 時顯示
   renderStateActions(issue) {
     const container = document.getElementById('issue-detail-state-actions');
     if (!container) {
       return;
     }
-    if (issue.state === 'open') {
-      container.innerHTML = `
-        <button id="issue-mark-done-btn" class="secondary" style="font-size: 12px; padding: 4px 10px;">${t('issue.detail.markDone')}</button>
-        <button id="issue-mark-cancel-btn" class="secondary" style="font-size: 12px; padding: 4px 10px;">${t('issue.detail.markCancel')}</button>
-      `;
-      container.querySelector('#issue-mark-done-btn').addEventListener('click', () => this.markDone());
-      container.querySelector('#issue-mark-cancel-btn').addEventListener('click', () => this.markCancelled());
-    } else {
-      container.innerHTML = `
-        <button id="issue-reopen-btn" class="secondary" style="font-size: 12px; padding: 4px 10px;">${t('issue.detail.reopen')}</button>
-      `;
-      container.querySelector('#issue-reopen-btn').addEventListener('click', () => this.reopenIssue());
-    }
-  }
-  // 標記為完成：closed state，無 cancel label
-  markDone() {
-    if (!this._detailIssue) {
+    if (issue.cancelled) {
+      container.innerHTML = '';
       return;
     }
-    this._detailDraft.state = 'closed';
-    this._detailDraft.cancelled = false;
-    this.refreshDetailFromDraft();
+    container.innerHTML = `
+      <button id="issue-mark-cancel-btn" class="secondary" style="font-size: 12px; padding: 4px 10px;">${t('issue.detail.markCancel')}</button>
+    `;
+    container.querySelector('#issue-mark-cancel-btn').addEventListener('click', () => this.markCancelled());
   }
   // 標記為取消：closed state + cancel label
   markCancelled() {
@@ -1400,16 +1392,6 @@ class ProjectManager {
     }
     this._detailDraft.state = 'closed';
     this._detailDraft.cancelled = true;
-    this.refreshDetailFromDraft();
-  }
-  // 重新開啟：state 回 open、清掉 cancel、status 重設為 todo
-  reopenIssue() {
-    if (!this._detailIssue) {
-      return;
-    }
-    this._detailDraft.state = 'open';
-    this._detailDraft.cancelled = false;
-    this._detailDraft.status = 'todo';
     this.refreshDetailFromDraft();
   }
   // 開啟刪除 issue 確認 modal

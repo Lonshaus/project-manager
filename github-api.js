@@ -110,43 +110,6 @@ class GitHubAPI {
       throw new Error(data.errors[0].message);
     }
   }
-  // 取得預設 branch 最新 commit 的 SHA；舊 repo 預設是 master，新 repo 預設是 main，兩者都試
-  async getDefaultBranchSHA(owner, repo) {
-    for (const branch of ['master', 'main']) {
-      const response = await fetch(
-        `${this.baseURL}/repos/${owner}/${repo}/branches/${branch}`,
-        {
-          headers: {
-            'Authorization': `token ${this.token}`,
-            'Accept': 'application/vnd.github.v3+json'
-          }
-        }
-      );
-      if (response.ok) {
-        const data = await response.json();
-        return { sha: data.commit.sha, branch };
-      }
-    }
-    throw new Error('找不到預設 branch（master/main）');
-  }
-  // 從指定 SHA 建立新 branch
-  async createBranch(owner, repo, branchName, sha) {
-    const response = await fetch(
-      `${this.baseURL}/repos/${owner}/${repo}/git/refs`,
-      {
-        method: 'POST',
-        headers: {
-          'Authorization': `token ${this.token}`,
-          'Accept': 'application/vnd.github.v3+json'
-        },
-        body: JSON.stringify({ ref: `refs/heads/${branchName}`, sha })
-      }
-    );
-    if (!response.ok) {
-      throw new Error(`GitHub API error: ${response.status}`);
-    }
-    return response.json();
-  }
   // 取得 repo 的所有 PR（含已關閉與已合併）
   async getPullRequests(owner, repo) {
     const response = await fetch(
@@ -224,25 +187,6 @@ class GitHubAPI {
   async repoExists(owner, repo) {
     const response = await fetch(
       `${this.baseURL}/repos/${owner}/${repo}`,
-      {
-        headers: {
-          'Authorization': `token ${this.token}`,
-          'Accept': 'application/vnd.github.v3+json'
-        }
-      }
-    );
-    if (response.status === 404) {
-      return false;
-    }
-    if (!response.ok) {
-      throw new Error(`GitHub API error: ${response.status}`);
-    }
-    return true;
-  }
-  // 檢查指定 branch 是否存在於 repo
-  async branchExists(owner, repo, branchName) {
-    const response = await fetch(
-      `${this.baseURL}/repos/${owner}/${repo}/branches/${encodeURIComponent(branchName)}`,
       {
         headers: {
           'Authorization': `token ${this.token}`,
