@@ -300,7 +300,7 @@ class GitHubAPI {
       { name: 'status:todo', color: 'ededed' },
       { name: 'status:process', color: 'eab308' },
       { name: 'status:review', color: '4caf50' },
-      { name: 'status:done', color: '2196f3' },
+      { name: 'cancel', color: '9e9e9e' },
       { name: 'priority:low', color: 'fee2e2' },
       { name: 'priority:medium', color: 'fca5a5' },
       { name: 'priority:high', color: 'ef4444' },
