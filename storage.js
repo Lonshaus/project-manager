@@ -34,12 +34,31 @@ class LocalStorage {
   async saveProjectIssues(projectId, issues) {
     const existing = await this.getIssuesByProject(projectId);
     // branchName/status 是 local-only 欄位，GitHub API 不知道，sync 時必須手動保留
-    const localMap = new Map(existing.map(e => [e.number, { branchName: e.branchName || null, status: e.status || null }]));
+    const localMap = new Map(existing.map(e => [e.number, { branchName: e.branchName || null, status: e.status || null, urgency: e.urgency || null }]));
     const tx = this.db.transaction('issues', 'readwrite');
     const store = tx.objectStore('issues');
     existing.forEach(issue => store.delete(issue.id));
     issues.forEach(issue => {
       const local = localMap.get(issue.number) || {};
+      // 若本地無 branchName，嘗試從 GitHub title 的 {branch}-{title} 格式自動還原
+      if (!local.branchName) {
+        const m = issue.title.match(/^((?:init|bug|feature)-\d{4})-(.+?)(?:-(Low|Medium|High|Urgent))?$/);
+        if (m) {
+          local.branchName = m[1];
+          if (m[3]) {
+            local.urgency = m[3];
+          }
+          if (!local.status) {
+            local.status = 'todo';
+          }
+        }
+      } else if (!local.urgency) {
+        // branchName 已知但 urgency 未存，嘗試從 title 尾部還原
+        const m = issue.title.match(/-(Low|Medium|High|Urgent)$/);
+        if (m) {
+          local.urgency = m[1];
+        }
+      }
       // issue.id 只在單一 repo 內唯一，加上 projectId 避免跨 repo 碰撞
       store.put({ ...issue, id: `${projectId}_${issue.id}`, projectId, ...local });
     });

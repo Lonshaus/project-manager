@@ -642,12 +642,27 @@
           <label>類型</label>
           <select id="issue-type">
             <option value="bug">Bug</option>
-            <option value="feature">功能新增</option>
+            <option value="feature">Feature</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Urgent度（選填）</label>
+          <select id="add-issue-urgency">
+            <option value="">—</option>
+            <option value="Low">Low</option>
+            <option value="Medium">Medium</option>
+            <option value="High">High</option>
+            <option value="Urgent">Urgent</option>
           </select>
         </div>
         <div class="form-group">
           <label>說明（選填）</label>
           <textarea id="issue-body" placeholder="詳細描述..."></textarea>
+        </div>
+        <div class="form-group">
+          <label>連結現有 branch（選填）</label>
+          <input type="text" id="add-issue-branch" placeholder="留空則自動建立新 branch" style="font-family: monospace;">
+          <p id="add-issue-branch-error" style="display: none; font-size: 12px; color: var(--error-text); margin-top: 4px;"></p>
         </div>
       </div>
       <div class="modal-footer">
@@ -697,7 +712,7 @@
     </div>
   </div>
   <div id="issue-detail-modal" class="modal-overlay">
-    <div class="modal-box" style="width: 540px; max-height: 80vh; display: flex; flex-direction: column;">
+    <div class="modal-box" style="width: 50vw; height: 50vh; display: flex; flex-direction: column;">
       <div class="modal-header">
         <div style="flex: 1; display: flex; align-items: center; gap: 6px; margin-right: 12px; min-width: 0;">
           <span id="issue-detail-title" style="font-size: 15px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1;"></span>
@@ -734,14 +749,14 @@
         <div style="border-top: 1px solid var(--border); padding-top: 16px;">
           <div style="font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-secondary); margin-bottom: 12px;">留言</div>
           <div id="issue-detail-comments"></div>
-          <div class="form-group" style="margin-top: 12px;">
-            <textarea id="issue-comment-input" placeholder="新增留言..." style="min-height: 72px;"></textarea>
+          <div style="position: relative; margin-top: 12px;">
+            <textarea id="issue-comment-input" placeholder="新增留言..." style="min-height: 72px; width: 100%; padding-right: 44px; resize: vertical; background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 4px; font-size: 13px; font-family: inherit; padding-top: 7px; padding-left: 10px; box-sizing: border-box;"></textarea>
+            <button id="issue-comment-submit-btn" title="送出留言" style="position: absolute; bottom: 8px; right: 8px; width: 28px; height: 28px; border-radius: 6px; background: #2563eb; border: none; display: flex; align-items: center; justify-content: center; cursor: pointer; padding: 0; flex-shrink: 0;"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2" fill="white" stroke="none"></polygon></svg></button>
           </div>
         </div>
       </div>
-      <div class="modal-footer" style="justify-content: space-between;">
+      <div class="modal-footer">
         <button id="issue-detail-delete-btn" class="danger">刪除 Issue</button>
-        <button id="issue-comment-submit-btn">送出留言</button>
       </div>
     </div>
   </div>

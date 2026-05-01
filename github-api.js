@@ -220,6 +220,25 @@ class GitHubAPI {
     }
     return response.json();
   }
+  // 檢查指定 branch 是否存在於 repo
+  async branchExists(owner, repo, branchName) {
+    const response = await fetch(
+      `${this.baseURL}/repos/${owner}/${repo}/branches/${encodeURIComponent(branchName)}`,
+      {
+        headers: {
+          'Authorization': `token ${this.token}`,
+          'Accept': 'application/vnd.github.v3+json'
+        }
+      }
+    );
+    if (response.status === 404) {
+      return false;
+    }
+    if (!response.ok) {
+      throw new Error(`GitHub API error: ${response.status}`);
+    }
+    return true;
+  }
   // 在 repo 建立 label（已存在則跳過）
   async createLabel(owner, repo, name, color) {
     const response = await fetch(
