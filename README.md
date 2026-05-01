@@ -14,10 +14,10 @@
 ### Issue 看板
 - 五欄看板：Todo / In Progress / In Review / Done / Canceled
 - Issue 卡片顯示類型 badge（bug/feature/init）與緊急度燈號
-- 自動 status（依對應 PR 狀態推算，只給 open issue 用）：
-  - PR draft → process
-  - PR open → review
-  - PR merged → GitHub 自動關 issue → state=closed → Done
+- 自動 status（依連結的 PR 集合聚合，只給 open issue 用）：
+  - 任何 open 非 draft → review
+  - 全 open 都是 draft → process
+  - **全部 closed/merged → 自動 PATCH issue state=closed → Done**
 - 自動同步狀態到 GitHub label（避免本地與遠端不一致）
 
 ### Issue 編輯（Draft 機制）
@@ -28,7 +28,7 @@
 - 卡片有未送出變更時：左側灰色邊條 + 凹陷感 + 右上角「未儲存」標籤
 - Modal 重開時若有 draft：banner 顯示「有未送出的變更（X 分鐘前）」+ 捨棄按鈕
 
-### Issue Identifier（連結 PR）
+### Issue Identifier 與 PR 連結
 - 每個 issue 都有一個算出來的識別碼：`{owner}-{issueNumber}`（例 `lonshaus-9`）
 - 顯示在 detail modal meta 列，可一鍵複製
 - 使用者本機自己創 branch，名稱以 identifier + dash 為前綴：
@@ -37,7 +37,9 @@
   git push -u origin lonshaus-9-add-toolbar
   ```
 - 開 PR 後，extension 透過 `pr.head.ref.startsWith('lonshaus-9-')` 自動匹配 issue
-- 不寫任何 metadata 到 issue body，識別碼隨時可從 owner + issue number 算出
+- **多 PR 支援**：一個 issue 可關聯多個 PR，detail modal「LINKED PRS」區塊顯示為可點擊 badge（連到 GitHub PR 頁），帶狀態 dot：綠（open）／灰圈（draft）／紫（merged）／紅（closed）
+- **手動連結**：當 branch 沒照命名規則時，可在 detail modal 點「＋ Link PR」輸入 PR 編號手動加入；手動連結存在 issue body 結尾的 `<!-- pm-meta: {"linkedPRs":[...]} -->` 註解
+- **全部 PR closed → 自動 Done**：refresh 或開啟 issue 時偵測到 linked PR 全部 closed/merged，自動 PATCH issue state=closed
 
 ### 緊急度
 - 四級：Low / Medium / High / Urgent
@@ -75,7 +77,8 @@ GitHub 為唯一真相來源，沒有任何 metadata 只存在本地：
 | Done | GitHub Issue state | `state: closed`（無 `cancel` label） |
 | Canceled | GitHub Issue state + label | `state: closed` + `cancel` label |
 | 緊急度 | GitHub Label | `priority:{level}` |
-| Issue ↔ PR 連結 | 純算 + branch 命名約定 | `pr.head.ref.startsWith('${owner}-${number}-')` |
+| Issue ↔ PR 自動連結 | 純算 + branch 命名約定 | `pr.head.ref.startsWith('${owner}-${number}-')` |
+| Issue ↔ PR 手動連結 | Issue body 結尾隱藏註解 | `<!-- pm-meta: {"linkedPRs":[14,15]} -->` |
 | 留言 | GitHub Issue Comments | 原生 |
 
 這個設計的好處：重新安裝擴充功能、換瀏覽器、清除本地資料 → 只要重整一次就能完全還原所有元資料，無需匯入匯出，也無需在 issue body 寫任何隱藏 metadata。
@@ -85,16 +88,18 @@ GitHub 為唯一真相來源，沒有任何 metadata 只存在本地：
 讀取（解析 GitHub → 內部格式）：
 ```
 GitHub API → LocalStorage.parseIssueMetadata(issue)
-  └─ labels 過濾 status:* / priority:* / cancel
-→ { status, urgency, cancelled }
+  ├─ labels 過濾 status:* / priority:* / cancel
+  └─ body 解析 pm-meta { branch, linkedPRs }
+→ { status, urgency, cancelled, branchName, linkedPRs }
 ```
 
 寫入（內部格式 → GitHub）：
 ```
-編輯動作 → this._detailDraft.{title|body|state|status|urgency|cancelled}
+編輯動作 → this._detailDraft.{title|body|state|status|urgency|cancelled|linkedPRs}
         → 點 X
         → commitDraft(snapshot)
             ├─ buildIssueLabels: 過濾既有 labels 後加新的 status:* / priority:* / cancel
+            ├─ buildIssueBody: displayBody + pm-meta { branch?, linkedPRs? }
             ├─ updateIssue (PATCH title + body + state)
             └─ setIssueLabels (PUT labels)
         → patchIssue 同步本地快取
@@ -103,11 +108,17 @@ GitHub API → LocalStorage.parseIssueMetadata(issue)
 
 PR 狀態 → Issue status 推算（open issue 用）：
 ```
-computeIssueStatus(issueNumber, legacyBranchName, prs, owner)
-  ├─ identifier = ${owner}-${issueNumber}
-  ├─ 找 pr.head.ref.startsWith(`${identifier}-`) 的 PR
-  ├─ legacy fallback：找 pr.head.ref === legacyBranchName 的 PR（給舊 issue 用）
-  └─ 依 PR 狀態回傳 'process'（draft）/ 'review'（open）/ null
+getLinkedPRs(issueNumber, legacyBranchName, manualLinkedPRs, prs, owner)
+  ├─ identifier prefix 匹配（pr.head.ref.startsWith(`${identifier}-`)）
+  ├─ legacy branchName 精準匹配（給舊 issue）
+  ├─ manual linkedPRs（pm-meta 陣列）
+  └─ 三者去重聯集
+
+computeIssueStatus(...)
+  ├─ 沒有 linked PR → null
+  ├─ 全部 closed/merged → 'all-closed'（caller 自動 PATCH state=closed → Done）
+  ├─ 任何 open 非 draft → 'review'
+  └─ 全 open 都 draft → 'process'
 ```
 
 ### 本地快取

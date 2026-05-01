@@ -111,6 +111,15 @@ class ProjectManager {
       }
     });
     document.getElementById('issue-draft-discard-btn').addEventListener('click', () => this.discardDraft());
+    document.getElementById('issue-link-pr-save-btn').addEventListener('click', () => this.linkPR());
+    document.getElementById('issue-link-pr-cancel-btn').addEventListener('click', () => this.closeLinkPRForm());
+    document.getElementById('issue-link-pr-input').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        this.linkPR();
+      } else if (e.key === 'Escape') {
+        this.closeLinkPRForm();
+      }
+    });
   }
   // 從 chrome.storage 重新讀取設定並重新渲染頁面
   async reload() {
@@ -250,13 +259,21 @@ class ProjectManager {
     return (body || '').replace(/\s*<!--\s*pm-meta:[^]*?-->\s*$/, '').trimEnd();
   }
   // 組合送回 GitHub 的 issue body：使用者內容 + pm-meta 註解
-  buildIssueBody(displayBody, branchName) {
+  // meta 包含 branch（legacy）與 linkedPRs（手動連結）；皆空時不寫 pm-meta
+  buildIssueBody(displayBody, { branchName, linkedPRs } = {}) {
     const cleaned = (displayBody || '').replace(/\s*<!--\s*pm-meta:[^]*?-->\s*$/, '').trimEnd();
-    if (!branchName) {
+    const meta = {};
+    if (branchName) {
+      meta.branch = branchName;
+    }
+    if (Array.isArray(linkedPRs) && linkedPRs.length > 0) {
+      meta.linkedPRs = linkedPRs;
+    }
+    if (Object.keys(meta).length === 0) {
       return cleaned;
     }
-    const meta = JSON.stringify({ branch: branchName });
-    return cleaned ? `${cleaned}\n\n<!-- pm-meta: ${meta} -->` : `<!-- pm-meta: ${meta} -->`;
+    const tag = `<!-- pm-meta: ${JSON.stringify(meta)} -->`;
+    return cleaned ? `${cleaned}\n\n${tag}` : tag;
   }
   // 在現有 labels 上替換 status:* / priority:* / cancel，保留其他（type 等）
   // cancelled === undefined 時不動 cancel 狀態（caller 沒指定就保留現狀）
@@ -557,25 +574,56 @@ class ProjectManager {
     btn.disabled = false;
     btn.textContent = t('issue.add.create');
   }
-  // 從對應 PR 推算 status（只給 open issue 用）。回傳 null 表示找不到對應 PR 不覆寫
-  // 匹配優先序：identifier prefix（${owner}-${number}-）→ legacy branchName 精準匹配
-  computeIssueStatus(issueNumber, legacyBranchName, prs, owner) {
-    const identifier = `${owner}-${issueNumber}`;
-    let pr = prs.find(p => p.head.ref.startsWith(`${identifier}-`));
-    if (!pr && legacyBranchName) {
-      // legacy fallback：舊 issue pm-meta 內的 branchName 精準匹配
-      pr = prs.find(p => p.head.ref === legacyBranchName);
+  // 取得與 issue 連結的所有 PR（去重聯集三來源）：
+  // 1. identifier prefix 匹配（${owner}-${number}-...）
+  // 2. legacy branchName 精準匹配（舊 pm-meta 來源）
+  // 3. manual linkedPRs（pm-meta linkedPRs 陣列）
+  getLinkedPRs(issueNumber, legacyBranchName, manualLinkedPRs, prs, owner) {
+    if (!Array.isArray(prs)) {
+      return [];
     }
-    if (!pr) {
+    const identifier = `${owner}-${issueNumber}`;
+    const seen = new Set();
+    const result = [];
+    const add = (pr) => {
+      if (pr && !seen.has(pr.number)) {
+        seen.add(pr.number);
+        result.push(pr);
+      }
+    };
+    for (const pr of prs) {
+      if (pr.head && pr.head.ref && pr.head.ref.startsWith(`${identifier}-`)) {
+        add(pr);
+      }
+    }
+    if (legacyBranchName) {
+      add(prs.find(p => p.head && p.head.ref === legacyBranchName));
+    }
+    if (Array.isArray(manualLinkedPRs)) {
+      for (const num of manualLinkedPRs) {
+        add(prs.find(p => p.number === num));
+      }
+    }
+    return result;
+  }
+  // 由 linked PR 集合聚合算 issue status：
+  // - 沒有 linked PR → null（不覆寫）
+  // - 全部 closed/merged → 'all-closed'（caller 自行決定是否 auto-close issue）
+  // - 任何 open 非 draft → 'review'
+  // - 全 open 都 draft → 'process'
+  computeIssueStatus(issueNumber, legacyBranchName, prs, owner, manualLinkedPRs) {
+    const linked = this.getLinkedPRs(issueNumber, legacyBranchName, manualLinkedPRs, prs, owner);
+    if (linked.length === 0) {
       return null;
     }
-    if (pr.state === 'open' && pr.draft) {
+    const open = linked.filter(p => p.state === 'open');
+    if (open.length === 0) {
+      return 'all-closed';
+    }
+    if (open.every(p => p.draft)) {
       return 'process';
     }
-    if (pr.state === 'open') {
-      return 'review';
-    }
-    return null;
+    return 'review';
   }
   // 將 status key 轉換為顯示文字與 CSS class（回傳 [label, cssClass]）
   statusDisplay(status) {
@@ -707,6 +755,7 @@ class ProjectManager {
       let status = parsed.status || cachedIssue?.status || null;
       const branchName = parsed.branchName || cachedIssue?.branchName || null;
       const urgency = parsed.urgency || cachedIssue?.urgency || null;
+      const linkedPRs = parsed.linkedPRs && parsed.linkedPRs.length ? parsed.linkedPRs : (cachedIssue?.linkedPRs || []);
       let needsRerender = false;
       if (cachedIssue && cachedIssue.state !== issue.state) {
         await this.storage.patchIssue(cachedIssue.id, { state: issue.state });
@@ -714,8 +763,20 @@ class ProjectManager {
       }
       // 自動 status 只給 open issue 用（closed → Done/Cancel 已由 state 決定）
       if (prs && issue.state === 'open') {
-        const autoStatus = this.computeIssueStatus(issue.number, branchName, prs, project.owner);
-        if (autoStatus !== null && autoStatus !== status) {
+        const autoStatus = this.computeIssueStatus(issue.number, branchName, prs, project.owner, linkedPRs);
+        if (autoStatus === 'all-closed') {
+          // 所有 linked PR 都關了 → 自動關 issue（state=closed → Done）
+          try {
+            const updated = await this.github.updateIssue(project.owner, project.repo, issueNumber, { state: 'closed' });
+            issue.state = updated.state;
+            if (cachedIssue) {
+              await this.storage.patchIssue(cachedIssue.id, { state: 'closed' });
+            }
+            needsRerender = true;
+          } catch (e) {
+            // 失敗就保持 open
+          }
+        } else if (autoStatus !== null && autoStatus !== status) {
           status = autoStatus;
           // 推到 GitHub label，避免本地與 GitHub 不一致
           try {
@@ -739,9 +800,12 @@ class ProjectManager {
         branchName,
         urgency,
         status,
+        linkedPRs,
         id: cachedIssue?.id || issue.id
       };
       this._detailIssue = baseIssue;
+      // 把當下的 PR 清單 cache 起來，給 renderLinkedPRs 用
+      this._detailPRs = prs || [];
       // 載入該 issue 在 IndexedDB 的草稿（若存在），覆蓋顯示用值
       const savedDraft = await this.storage.getDraft(this.activeProjectId, issueNumber);
       this._draftSavedAt = null;
@@ -842,6 +906,7 @@ class ProjectManager {
     this._detailComments = comments;
     this.cancelTitleEditMode();
     this.cancelBodyEditMode();
+    this.closeLinkPRForm();
     // 草稿提示橫幅：僅當有從 IndexedDB 載入的舊 draft 時顯示
     const banner = document.getElementById('issue-draft-banner');
     if (this._draftSavedAt) {
@@ -886,6 +951,7 @@ class ProjectManager {
       <div id="issue-urgency-dropdown-menu" style="display: none; position: absolute; top: calc(100% + 4px); left: 0; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 4px 16px rgba(0,0,0,0.15); z-index: 250; overflow: hidden; min-width: 110px;"></div>
     </div>`;
     document.getElementById('issue-detail-meta').innerHTML = `${labels}${statusDropdown}${urgencyDropdown}${identifierPart}`;
+    this.renderLinkedPRs(issue);
     this.renderStateActions(issue);
     if (identifier) {
       document.getElementById('copy-identifier-btn').addEventListener('click', () => this.copyIdentifier());
@@ -997,16 +1063,18 @@ class ProjectManager {
     }
     const draft = this._detailDraft || {};
     const branchName = 'branchName' in draft ? draft.branchName : issue.branchName;
+    const linkedPRs = 'linkedPRs' in draft ? draft.linkedPRs : (issue.linkedPRs || []);
     const displayBody = 'body' in draft ? draft.body : this.displayBody(issue.body);
     return {
       ...issue,
       title: 'title' in draft ? draft.title : issue.title,
-      body: this.buildIssueBody(displayBody, branchName),
+      body: this.buildIssueBody(displayBody, { branchName, linkedPRs }),
       state: 'state' in draft ? draft.state : issue.state,
       status: 'status' in draft ? draft.status : issue.status,
       urgency: 'urgency' in draft ? draft.urgency : issue.urgency,
       cancelled: 'cancelled' in draft ? draft.cancelled : !!issue.cancelled,
-      branchName
+      branchName,
+      linkedPRs
     };
   }
   // 用目前 draft 重新渲染 detail modal
@@ -1048,10 +1116,11 @@ class ProjectManager {
     if ('state' in draft) {
       patch.state = draft.state;
     }
-    if ('body' in draft || 'branchName' in draft) {
+    if ('body' in draft || 'branchName' in draft || 'linkedPRs' in draft) {
       const displayBody = 'body' in draft ? draft.body : this.displayBody(issue.body);
       const branchName = 'branchName' in draft ? draft.branchName : issue.branchName;
-      patch.body = this.buildIssueBody(displayBody, branchName);
+      const linkedPRs = 'linkedPRs' in draft ? draft.linkedPRs : (issue.linkedPRs || []);
+      patch.body = this.buildIssueBody(displayBody, { branchName, linkedPRs });
     }
     const labelsChanged = 'status' in draft || 'urgency' in draft || 'cancelled' in draft;
     const finalStatus = 'status' in draft ? draft.status : issue.status;
@@ -1092,6 +1161,9 @@ class ProjectManager {
         }
         if ('cancelled' in draft) {
           localPatch.cancelled = draft.cancelled;
+        }
+        if ('linkedPRs' in draft) {
+          localPatch.linkedPRs = draft.linkedPRs;
         }
         if (Object.keys(localPatch).length > 0) {
           await this.storage.patchIssue(match.id, localPatch);
@@ -1174,6 +1246,123 @@ class ProjectManager {
     if (dot) {
       dot.className = `status-dot ${this.statusDotClass(newStatus)}`;
     }
+  }
+  // 渲染 Linked PRs 區塊：badge 連到 GitHub PR 頁、手動連結的可移除、最後加 + Link PR 按鈕
+  renderLinkedPRs(issue) {
+    const container = document.getElementById('issue-linked-prs');
+    if (!container || !this._detailProject) {
+      return;
+    }
+    const owner = this._detailProject.owner;
+    const repo = this._detailProject.repo;
+    const linked = this.getLinkedPRs(
+      issue.number, issue.branchName, issue.linkedPRs, this._detailPRs || [], owner
+    );
+    const manualSet = new Set(issue.linkedPRs || []);
+    const stateClass = (pr) => {
+      if (pr.state === 'closed' && pr.merged_at) {
+        return 'pr-merged';
+      }
+      if (pr.state === 'closed') {
+        return 'pr-closed';
+      }
+      if (pr.draft) {
+        return 'pr-draft';
+      }
+      return 'pr-open';
+    };
+    const badges = linked.map(pr => {
+      const cls = stateClass(pr);
+      const url = `https://github.com/${owner}/${repo}/pull/${pr.number}`;
+      const isManual = manualSet.has(pr.number);
+      const unlinkBtn = isManual
+        ? `<button class="pr-unlink-btn" data-pr-number="${pr.number}" title="${t('issue.detail.unlinkPR')}">×</button>`
+        : '';
+      return `<a href="${url}" target="_blank" rel="noopener noreferrer" class="pr-badge ${cls}"><span class="pr-state-dot"></span><span>#${pr.number}</span></a>${unlinkBtn}`;
+    }).join('');
+    const addBtn = `<button id="issue-link-pr-add-btn">＋ ${t('issue.detail.linkPR')}</button>`;
+    container.innerHTML = badges + addBtn;
+    container.querySelectorAll('.pr-unlink-btn').forEach(el => {
+      el.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        this.unlinkPR(Number(el.dataset.prNumber));
+      });
+    });
+    document.getElementById('issue-link-pr-add-btn').addEventListener('click', () => this.openLinkPRForm());
+  }
+  // 顯示連結 PR 輸入框
+  openLinkPRForm() {
+    const row = document.getElementById('issue-link-pr-row');
+    if (!row) {
+      return;
+    }
+    const input = document.getElementById('issue-link-pr-input');
+    input.value = '';
+    row.style.display = 'flex';
+    input.focus();
+  }
+  // 隱藏連結 PR 輸入框
+  closeLinkPRForm() {
+    const row = document.getElementById('issue-link-pr-row');
+    if (row) {
+      row.style.display = 'none';
+    }
+    const input = document.getElementById('issue-link-pr-input');
+    if (input) {
+      input.value = '';
+    }
+  }
+  // 手動連結 PR：驗證 PR 存在後寫入 _detailDraft.linkedPRs
+  async linkPR() {
+    if (!this._detailIssue || !this._detailProject || !this.github) {
+      return;
+    }
+    const input = document.getElementById('issue-link-pr-input');
+    const num = Number(input.value);
+    if (!Number.isInteger(num) || num <= 0) {
+      return;
+    }
+    const btn = document.getElementById('issue-link-pr-save-btn');
+    btn.disabled = true;
+    btn.textContent = t('state.validating');
+    try {
+      // 透過 PR list 驗證存在（避免額外加 API method）
+      const prs = this._detailPRs || [];
+      const exists = prs.some(p => p.number === num);
+      if (!exists) {
+        this.showMessage(t('msg.prNotFound', { n: num }), 'error');
+        btn.disabled = false;
+        btn.textContent = t('modal.link');
+        return;
+      }
+      const merged = this.mergedDetailIssue();
+      const current = merged.linkedPRs || [];
+      if (current.includes(num)) {
+        this.closeLinkPRForm();
+        btn.disabled = false;
+        btn.textContent = t('modal.link');
+        return;
+      }
+      this._detailDraft.linkedPRs = [...current, num];
+      this.closeLinkPRForm();
+      this.refreshDetailFromDraft();
+    } catch (e) {
+      this.showMessage(t('msg.linkFailed', { msg: e.message }), 'error');
+      btn.disabled = false;
+      btn.textContent = t('modal.link');
+    }
+  }
+  // 取消手動連結 PR
+  unlinkPR(prNumber) {
+    if (!this._detailIssue) {
+      return;
+    }
+    const merged = this.mergedDetailIssue();
+    const current = merged.linkedPRs || [];
+    const next = current.filter(n => n !== prNumber);
+    this._detailDraft.linkedPRs = next;
+    this.refreshDetailFromDraft();
   }
   // 渲染 state 操作按鈕區（依 state 顯示不同按鈕組）
   renderStateActions(issue) {
@@ -1313,8 +1502,16 @@ class ProjectManager {
         if (ci.state !== 'open') {
           continue;
         }
-        const autoStatus = this.computeIssueStatus(ci.number, ci.branchName, prs, project.owner);
-        if (autoStatus !== null && autoStatus !== ci.status) {
+        const autoStatus = this.computeIssueStatus(ci.number, ci.branchName, prs, project.owner, ci.linkedPRs);
+        if (autoStatus === 'all-closed') {
+          // 所有 linked PR 都關了 → 自動關 issue（→ Done）
+          try {
+            await this.github.updateIssue(project.owner, project.repo, ci.number, { state: 'closed' });
+            await this.storage.patchIssue(ci.id, { state: 'closed' });
+          } catch (e) {
+            // 失敗就保留 open
+          }
+        } else if (autoStatus !== null && autoStatus !== ci.status) {
           // 同步把新 status 推到 GitHub label，避免本地與 GitHub 不一致
           try {
             const newLabels = this.buildIssueLabels(ci.labels, { status: autoStatus, urgency: ci.urgency });
