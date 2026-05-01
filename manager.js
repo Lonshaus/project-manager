@@ -12,6 +12,7 @@ class ProjectManager {
     await this.storage.init();
     await loadUserLocale();
     applyI18nToDOM();
+    this.configureMarkdown();
     new SettingsPanel();
     this.setupEventListeners();
     await this.reload();
@@ -85,6 +86,21 @@ class ProjectManager {
       }
     });
     document.getElementById('issue-body-edit-btn').addEventListener('click', () => this.enterBodyEditMode());
+    document.getElementById('issue-body-edit-input').addEventListener('input', (e) => {
+      e.target.style.height = 'auto';
+      e.target.style.height = `${Math.max(80, e.target.scrollHeight)}px`;
+    });
+    document.getElementById('issue-detail-body').addEventListener('click', (e) => {
+      // 點到連結 / 程式碼選取等不要觸發編輯模式
+      if (e.target.closest('a')) {
+        return;
+      }
+      // 拖曳選取文字時不進入編輯
+      if (window.getSelection && window.getSelection().toString()) {
+        return;
+      }
+      this.enterBodyEditMode();
+    });
     document.getElementById('issue-body-save-btn').addEventListener('click', () => this.saveIssueBody());
     document.getElementById('issue-body-cancel-btn').addEventListener('click', () => this.cancelBodyEditMode());
     document.getElementById('close-init-issue-btn').addEventListener('click', () => this.closeInitIssueModal());
@@ -216,6 +232,28 @@ class ProjectManager {
       closed: 'dot-closed'
     };
     return map[status] || 'dot-closed';
+  }
+  // 設定 marked + DOMPurify（init 時呼叫一次）
+  configureMarkdown() {
+    if (typeof marked !== 'undefined') {
+      marked.use({ gfm: true, breaks: true });
+    }
+    if (typeof DOMPurify !== 'undefined') {
+      // 所有 <a> 在新分頁開啟，避免 manager 頁被替換掉
+      DOMPurify.addHook('afterSanitizeAttributes', (node) => {
+        if (node.tagName === 'A') {
+          node.setAttribute('target', '_blank');
+          node.setAttribute('rel', 'noopener noreferrer');
+        }
+      });
+    }
+  }
+  // 把 markdown 文字轉成 sanitize 過的 HTML（給 innerHTML 用）
+  renderMarkdown(text) {
+    if (!text || typeof marked === 'undefined' || typeof DOMPurify === 'undefined') {
+      return '';
+    }
+    return DOMPurify.sanitize(marked.parse(text));
   }
   // 取得使用者可見的 body 內容（去除尾端的 pm-meta 隱藏註解）
   displayBody(body) {
@@ -792,16 +830,25 @@ class ProjectManager {
     document.getElementById('issue-detail-title').textContent = newTitle;
     this.cancelTitleEditMode();
   }
-  // 切換說明到編輯模式
+  // 切換說明到編輯模式：textarea 自動撐到內容高度
   enterBodyEditMode() {
     if (!this._detailIssue) {
       return;
     }
-    document.getElementById('issue-detail-body').style.display = 'none';
+    const bodyEl = document.getElementById('issue-detail-body');
+    // 取目前顯示區的高度當作 textarea 起始高度
+    const targetHeight = Math.max(80, bodyEl.offsetHeight);
+    bodyEl.style.display = 'none';
     document.getElementById('issue-body-edit-btn').style.display = 'none';
     const textarea = document.getElementById('issue-body-edit-input');
     textarea.value = this.displayBody(this._detailIssue.body);
     textarea.style.display = '';
+    textarea.style.height = `${targetHeight}px`;
+    // scrollHeight 在還沒佈局完前會不準，下一個 frame 再校正一次
+    requestAnimationFrame(() => {
+      textarea.style.height = 'auto';
+      textarea.style.height = `${Math.max(80, textarea.scrollHeight)}px`;
+    });
     document.getElementById('issue-body-edit-actions').style.display = 'flex';
     textarea.focus();
   }
@@ -819,7 +866,14 @@ class ProjectManager {
     }
     const newDisplayBody = document.getElementById('issue-body-edit-input').value.trim();
     this._detailDraft.body = newDisplayBody;
-    document.getElementById('issue-detail-body').textContent = newDisplayBody || t('issue.detail.noBody');
+    const bodyEl = document.getElementById('issue-detail-body');
+    if (newDisplayBody) {
+      bodyEl.classList.add('markdown-body');
+      bodyEl.innerHTML = this.renderMarkdown(newDisplayBody);
+    } else {
+      bodyEl.classList.remove('markdown-body');
+      bodyEl.textContent = t('issue.detail.noBody');
+    }
     this.cancelBodyEditMode();
   }
   // 將 issue 資料與留言填入詳情 modal
@@ -931,7 +985,15 @@ class ProjectManager {
         this.closeUrgencyDropdown();
       });
     });
-    document.getElementById('issue-detail-body').textContent = this.displayBody(issue.body) || t('issue.detail.noBody');
+    const bodyEl = document.getElementById('issue-detail-body');
+    const displayed = this.displayBody(issue.body);
+    if (displayed) {
+      bodyEl.classList.add('markdown-body');
+      bodyEl.innerHTML = this.renderMarkdown(displayed);
+    } else {
+      bodyEl.classList.remove('markdown-body');
+      bodyEl.textContent = t('issue.detail.noBody');
+    }
     const commentsEl = document.getElementById('issue-detail-comments');
     if (comments.length === 0) {
       commentsEl.innerHTML = `<div style="font-size: 13px; color: var(--text-muted);">${t('issue.detail.noComments')}</div>`;
@@ -940,7 +1002,7 @@ class ProjectManager {
         const date = new Date(c.created_at).toLocaleString('zh-TW');
         return `<div class="comment-item">
           <div class="comment-meta">${c.user.login} · ${date}</div>
-          <div class="comment-body">${c.body}</div>
+          <div class="comment-body markdown-body">${this.renderMarkdown(c.body)}</div>
         </div>`;
       }).join('');
     }
