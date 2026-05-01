@@ -380,7 +380,8 @@ class ProjectManager {
   // 開啟空 repo 的手動初始化 issue modal
   openInitIssueModal() {
     document.getElementById('init-issue-title').value = '';
-    document.getElementById('init-issue-body').value = '';
+    // 預填 body 為結構化範本，使用者可直接編輯
+    document.getElementById('init-issue-body').value = t('init.bodyTemplate');
     document.getElementById('init-issue-modal').classList.add('open');
     document.getElementById('init-issue-title').focus();
   }
