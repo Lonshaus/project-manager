@@ -2,7 +2,7 @@
 class LocalStorage {
   constructor() {
     this.dbName = 'ProjectManagerDB';
-    this.version = 2;
+    this.version = 3;
     this.db = null;
   }
   // 初始化 IndexedDB，建立 schema（含版本升級 migration）
@@ -27,40 +27,96 @@ class LocalStorage {
             issueStore.createIndex('projectId', 'projectId', { unique: false });
           }
         }
+        if (event.oldVersion < 3) {
+          const draftsStore = db.createObjectStore('drafts', { keyPath: 'key' });
+          draftsStore.createIndex('projectId', 'projectId', { unique: false });
+        }
       };
     });
   }
-  // 用 GitHub 最新資料覆寫指定專案的所有 issues，保留 local-only 欄位
+  // 儲存 draft（key 為 projectId_issueNumber，整體 upsert）
+  async saveDraft(projectId, issueNumber, draft) {
+    const key = `${projectId}_${issueNumber}`;
+    const tx = this.db.transaction('drafts', 'readwrite');
+    return new Promise((resolve, reject) => {
+      tx.objectStore('drafts').put({ ...draft, key, projectId, issueNumber, updatedAt: Date.now() });
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+  // 取得單一 draft
+  async getDraft(projectId, issueNumber) {
+    const key = `${projectId}_${issueNumber}`;
+    const tx = this.db.transaction('drafts', 'readonly');
+    return new Promise((resolve, reject) => {
+      const req = tx.objectStore('drafts').get(key);
+      req.onsuccess = () => resolve(req.result || null);
+      req.onerror = () => reject(req.error);
+    });
+  }
+  // 刪除單一 draft
+  async deleteDraft(projectId, issueNumber) {
+    const key = `${projectId}_${issueNumber}`;
+    const tx = this.db.transaction('drafts', 'readwrite');
+    return new Promise((resolve, reject) => {
+      tx.objectStore('drafts').delete(key);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+  // 取得指定專案的所有 drafts
+  async getDraftsByProject(projectId) {
+    const tx = this.db.transaction('drafts', 'readonly');
+    return new Promise((resolve, reject) => {
+      const req = tx.objectStore('drafts').index('projectId').getAll(projectId);
+      req.onsuccess = () => resolve(req.result || []);
+      req.onerror = () => reject(req.error);
+    });
+  }
+  // 從 issue 物件解析 status / urgency / branchName：labels (status:* / priority:*) + body 隱藏 metadata
+  static parseIssueMetadata(issue) {
+    let status = null;
+    let urgency = null;
+    let branchName = null;
+    const urgencyMap = { low: 'Low', medium: 'Medium', high: 'High', urgent: 'Urgent' };
+    for (const label of (issue.labels || [])) {
+      const name = typeof label === 'string' ? label : label.name;
+      if (name.startsWith('status:')) {
+        status = name.slice(7);
+      } else if (name.startsWith('priority:')) {
+        urgency = urgencyMap[name.slice(9)] || null;
+      }
+    }
+    if (issue.body) {
+      const m = issue.body.match(/<!--\s*pm-meta:\s*({[^]*?})\s*-->/);
+      if (m) {
+        try {
+          const meta = JSON.parse(m[1]);
+          if (meta.branch) {
+            branchName = meta.branch;
+          }
+        } catch (e) {
+          // metadata 解析失敗就忽略
+        }
+      }
+    }
+    return { status, urgency, branchName };
+  }
+  // 用 GitHub 最新資料覆寫指定專案的所有 issues，並從 labels / body 解析元資料
   async saveProjectIssues(projectId, issues) {
     const existing = await this.getIssuesByProject(projectId);
-    // branchName/status 是 local-only 欄位，GitHub API 不知道，sync 時必須手動保留
-    const localMap = new Map(existing.map(e => [e.number, { branchName: e.branchName || null, status: e.status || null, urgency: e.urgency || null }]));
     const tx = this.db.transaction('issues', 'readwrite');
     const store = tx.objectStore('issues');
     existing.forEach(issue => store.delete(issue.id));
     issues.forEach(issue => {
-      const local = localMap.get(issue.number) || {};
-      // 若本地無 branchName，嘗試從 GitHub title 的 {branch}-{title} 格式自動還原
-      if (!local.branchName) {
-        const m = issue.title.match(/^((?:init|bug|feature)-\d{4})-(.+?)(?:-(Low|Medium|High|Urgent))?$/);
-        if (m) {
-          local.branchName = m[1];
-          if (m[3]) {
-            local.urgency = m[3];
-          }
-          if (!local.status) {
-            local.status = 'todo';
-          }
-        }
-      } else if (!local.urgency) {
-        // branchName 已知但 urgency 未存，嘗試從 title 尾部還原
-        const m = issue.title.match(/-(Low|Medium|High|Urgent)$/);
-        if (m) {
-          local.urgency = m[1];
-        }
-      }
+      const parsed = LocalStorage.parseIssueMetadata(issue);
+      const merged = {
+        branchName: parsed.branchName || null,
+        status: parsed.status || null,
+        urgency: parsed.urgency || null
+      };
       // issue.id 只在單一 repo 內唯一，加上 projectId 避免跨 repo 碰撞
-      store.put({ ...issue, id: `${projectId}_${issue.id}`, projectId, ...local });
+      store.put({ ...issue, id: `${projectId}_${issue.id}`, projectId, ...merged });
     });
     return new Promise((resolve, reject) => {
       tx.oncomplete = () => resolve();

@@ -10,6 +10,8 @@ class ProjectManager {
   // 初始化 app，載入設定並渲染頁面
   async init() {
     await this.storage.init();
+    await loadUserLocale();
+    applyI18nToDOM();
     new SettingsPanel();
     this.setupEventListeners();
     await this.reload();
@@ -55,10 +57,10 @@ class ProjectManager {
         this.closeRemoveProjectModal();
       }
     });
-    document.getElementById('close-issue-detail-btn').addEventListener('click', () => this.closeIssueDetail());
+    document.getElementById('close-issue-detail-btn').addEventListener('click', () => this.commitDraftAndClose());
     document.getElementById('issue-detail-modal').addEventListener('click', (e) => {
       if (e.target === e.currentTarget) {
-        this.closeIssueDetail();
+        this.saveDraftAndClose();
       }
     });
     document.getElementById('issue-detail-toggle-btn').addEventListener('click', () => this.toggleIssueState());
@@ -95,6 +97,7 @@ class ProjectManager {
     });
     document.getElementById('issue-link-branch-save-btn').addEventListener('click', () => this.saveBranchLink());
     document.getElementById('issue-link-branch-cancel-btn').addEventListener('click', () => this.closeLinkBranchForm());
+    document.getElementById('issue-draft-discard-btn').addEventListener('click', () => this.discardDraft());
     document.getElementById('issue-link-branch-input').addEventListener('keydown', (e) => {
       if (e.key === 'Enter') {
         this.saveBranchLink();
@@ -119,12 +122,12 @@ class ProjectManager {
     document.getElementById('message').className = 'message';
     document.getElementById('add-issue-btn').style.display = this.projects.length > 0 ? '' : 'none';
     if (!githubToken) {
-      this.showMessage('請先在設定中輸入 GitHub Token', 'error');
-      this.showEmptyState('尚未設定 GitHub Token，請點右上角「設定」');
+      this.showMessage(t('msg.tokenRequired'), 'error');
+      this.showEmptyState(t('empty.noToken'));
       return;
     }
     if (this.projects.length === 0) {
-      this.showEmptyState('還沒有任何專案，點擊下拉選單新增');
+      this.showEmptyState(t('empty.noProject'));
       return;
     }
     await this.renderIssues();
@@ -134,7 +137,7 @@ class ProjectManager {
     const label = document.getElementById('project-dropdown-label');
     const menu = document.getElementById('project-dropdown-menu');
     const active = this.projects.find(p => p.id === this.activeProjectId);
-    label.textContent = active ? active.name : '選擇專案';
+    label.textContent = active ? active.name : t('app.selectProject');
     const projectItems = this.projects.map(p => {
       const item = document.createElement('div');
       item.className = `dropdown-item${p.id === this.activeProjectId ? ' active' : ''}`;
@@ -147,10 +150,10 @@ class ProjectManager {
     }).join('');
     const divider = this.projects.length > 0 ? '<div class="dropdown-divider"></div>' : '';
     const removeItem = this.activeProjectId
-      ? `<div class="dropdown-item remove-item" id="dropdown-remove-item">移除此專案</div>`
+      ? `<div class="dropdown-item remove-item" id="dropdown-remove-item">${t('app.removeProject')}</div>`
       : '';
     menu.innerHTML = projectItems + divider +
-      `<div class="dropdown-item add-item" id="dropdown-add-item">＋ 新增專案</div>` +
+      `<div class="dropdown-item add-item" id="dropdown-add-item">${t('app.addProject')}</div>` +
       removeItem;
     menu.querySelector('#dropdown-add-item').addEventListener('click', (e) => {
       e.stopPropagation();
@@ -214,24 +217,49 @@ class ProjectManager {
     };
     return map[status] || 'dot-closed';
   }
-  // 取得 issue 的 UI 顯示標題（去除 GitHub title 中的 branch prefix 與 urgency suffix）
-  displayTitle(title, branchName, urgency) {
-    let t = title;
-    if (branchName && t.startsWith(`${branchName}-`)) {
-      t = t.slice(branchName.length + 1);
-    }
-    if (urgency && t.endsWith(`-${urgency}`)) {
-      t = t.slice(0, t.length - urgency.length - 1);
-    }
-    return t;
+  // 取得使用者可見的 body 內容（去除尾端的 pm-meta 隱藏註解）
+  displayBody(body) {
+    return (body || '').replace(/\s*<!--\s*pm-meta:[^]*?-->\s*$/, '').trimEnd();
   }
-  // 組合 GitHub 儲存用的完整 issue title
-  buildGithubTitle(branchName, displayTitle, urgency) {
-    let t = branchName ? `${branchName}-${displayTitle}` : displayTitle;
-    if (urgency) {
-      t = `${t}-${urgency}`;
+  // 組合送回 GitHub 的 issue body：使用者內容 + pm-meta 註解
+  buildIssueBody(displayBody, branchName) {
+    const cleaned = (displayBody || '').replace(/\s*<!--\s*pm-meta:[^]*?-->\s*$/, '').trimEnd();
+    if (!branchName) {
+      return cleaned;
     }
-    return t;
+    const meta = JSON.stringify({ branch: branchName });
+    return cleaned ? `${cleaned}\n\n<!-- pm-meta: ${meta} -->` : `<!-- pm-meta: ${meta} -->`;
+  }
+  // 在現有 labels 上替換 status:* 與 priority:*，保留其他（type 等）
+  buildIssueLabels(currentLabels, { status, urgency }) {
+    const out = (currentLabels || [])
+      .map(l => typeof l === 'string' ? l : l.name)
+      .filter(n => !n.startsWith('status:') && !n.startsWith('priority:'));
+    if (status) {
+      out.push(`status:${status}`);
+    }
+    if (urgency) {
+      out.push(`priority:${urgency.toLowerCase()}`);
+    }
+    return Array.from(new Set(out));
+  }
+  // 確保系統 labels 在 repo 中已建立。狀態存 chrome.storage.local 持久化，每個 repo 只跑一次
+  async ensureLabelsOnce(owner, repo) {
+    const storeKey = `labelsEnsured_${owner}_${repo}`;
+    if (!this._labelsEnsured) {
+      this._labelsEnsured = new Set();
+    }
+    if (this._labelsEnsured.has(storeKey)) {
+      return;
+    }
+    const stored = await chrome.storage.local.get(storeKey);
+    if (stored[storeKey]) {
+      this._labelsEnsured.add(storeKey);
+      return;
+    }
+    await this.github.ensureSystemLabels(owner, repo);
+    await chrome.storage.local.set({ [storeKey]: true });
+    this._labelsEnsured.add(storeKey);
   }
   // 切換目前使用的專案
   async selectProject(projectId) {
@@ -245,36 +273,63 @@ class ProjectManager {
   openAddProjectModal() {
     document.getElementById('modal-project-name').value = '';
     document.getElementById('modal-project-repo').value = '';
+    document.getElementById('add-project-error').style.display = 'none';
     document.getElementById('add-project-modal').classList.add('open');
     document.getElementById('modal-project-name').focus();
   }
   // 關閉新增專案 modal
   closeAddProjectModal() {
     document.getElementById('add-project-modal').classList.remove('open');
+    document.getElementById('add-project-error').style.display = 'none';
   }
   // 儲存新專案並執行初始化流程
   async confirmAddProject() {
     const name = document.getElementById('modal-project-name').value.trim();
     const repo = document.getElementById('modal-project-repo').value.trim();
+    const errEl = document.getElementById('add-project-error');
+    errEl.style.display = 'none';
     if (!name || !repo) {
       return;
     }
     // 直接從 storage 讀取，避免設定面板儲存後 this.owner 尚未更新的問題
     const { owner } = await chrome.storage.sync.get('owner');
     if (!owner) {
-      this.showMessage('請先在設定中填寫 GitHub Username', 'error');
+      errEl.textContent = t('msg.usernameRequired');
+      errEl.style.display = 'block';
       return;
     }
     this.owner = owner;
+    if (!this.github) {
+      errEl.textContent = t('msg.tokenRequired');
+      errEl.style.display = 'block';
+      return;
+    }
+    const btn = document.getElementById('confirm-add-project-btn');
+    btn.disabled = true;
+    btn.textContent = t('state.validating');
+    try {
+      const exists = await this.github.repoExists(owner, repo);
+      if (!exists) {
+        errEl.textContent = t('msg.repoNotFound', { name: `${owner}/${repo}` });
+        errEl.style.display = 'block';
+        btn.disabled = false;
+        btn.textContent = t('modal.add');
+        return;
+      }
+    } catch (err) {
+      errEl.textContent = t('msg.repoValidateFailed', { msg: err.message });
+      errEl.style.display = 'block';
+      btn.disabled = false;
+      btn.textContent = t('modal.add');
+      return;
+    }
     const newProject = { id: `proj_${Date.now()}`, name, owner, repo };
     this.projects.push(newProject);
     this.activeProjectId = newProject.id;
     await chrome.storage.sync.set({ projects: this.projects, activeProjectId: this.activeProjectId });
     this.closeAddProjectModal();
-    if (!this.github) {
-      await this.reload();
-      return;
-    }
+    btn.disabled = false;
+    btn.textContent = t('modal.add');
     await this.initializeProject(newProject);
   }
   // 新增專案後自動建立 init issue（視 repo 是否為空決定行為）
@@ -283,27 +338,32 @@ class ProjectManager {
     try {
       isEmpty = await this.github.isRepoEmpty(project.owner, project.repo);
     } catch (e) {
+      this.showMessage(t('msg.initFailed', { msg: e.message }), 'error');
       await this.reload();
       return;
     }
     if (!isEmpty) {
       try {
         await this.github.createLabel(project.owner, project.repo, 'init', '6f42c1');
-        const issue = await this.github.createIssue(
-          project.owner, project.repo,
-          '專案初始化',
-          '此專案的初始化 issue，自動建立。',
-          ['init']
+        await this.ensureLabelsOnce(project.owner, project.repo);
+        // 先抓現有 issues，若已存在帶 init label 的 issue 就直接沿用，不重複建立
+        const existingIssues = await this.github.getIssues(project.owner, project.repo);
+        const hasInit = existingIssues.some(i =>
+          (i.labels || []).some(l => (typeof l === 'string' ? l : l.name) === 'init')
         );
-        await this.storage.saveIssue({
-          ...issue,
-          id: `${project.id}_${issue.id}`,
-          projectId: project.id,
-          branchName: null,
-          status: 'done'
-        });
+        if (!hasInit) {
+          await this.github.createIssue(
+            project.owner, project.repo,
+            t('init.issueAutoTitle'),
+            t('init.issueAutoBody'),
+            ['init', 'status:done']
+          );
+        }
+        // 一次同步全部 issues（含剛建立的 init 或既有的 init），用標準 sync 邏輯解析 labels/body
+        const refreshed = hasInit ? existingIssues : await this.github.getIssues(project.owner, project.repo);
+        await this.storage.saveProjectIssues(project.id, refreshed);
       } catch (e) {
-        this.showMessage('初始化 issue 建立失敗: ' + e.message, 'error');
+        this.showMessage(t('msg.initIssueFailed', { msg: e.message }), 'error');
       }
       await this.reload();
     } else {
@@ -342,7 +402,7 @@ class ProjectManager {
     }
     const btn = document.getElementById('confirm-init-issue-btn');
     btn.disabled = true;
-    btn.textContent = '建立中...';
+    btn.textContent = t('state.creating');
     try {
       // 等背景 README commit 完成，確保 branch 建立不會因為空 repo 而失敗
       if (this._initReadmePromise) {
@@ -354,16 +414,18 @@ class ProjectManager {
         this._initReadmePromise = null;
       }
       await this.github.createLabel(project.owner, project.repo, 'init', '6f42c1');
+      await this.ensureLabelsOnce(project.owner, project.repo);
       const randomNum = Math.floor(Math.random() * 9000) + 1000;
       const branchName = `init-${randomNum}`;
+      const issueBody = this.buildIssueBody(body, branchName);
       const issue = await this.github.createIssue(
-        project.owner, project.repo, `${branchName}-${title}`, body, ['init']
+        project.owner, project.repo, title, issueBody, ['init', 'status:todo']
       );
       try {
         const { sha } = await this.github.getDefaultBranchSHA(project.owner, project.repo);
         await this.github.createBranch(project.owner, project.repo, branchName, sha);
       } catch (branchErr) {
-        this.showMessage(`Issue 已建立，但 branch 建立失敗: ${branchErr.message}`, 'error');
+        this.showMessage(t('msg.initIssueCreated', { msg: branchErr.message }), 'error');
       }
       await this.storage.saveIssue({
         ...issue,
@@ -376,10 +438,10 @@ class ProjectManager {
       this._initProject = null;
       await this.renderIssues();
     } catch (error) {
-      this.showMessage('建立初始化 issue 失敗: ' + error.message, 'error');
+      this.showMessage(t('msg.createInitIssueFailed', { msg: error.message }), 'error');
     }
     btn.disabled = false;
-    btn.textContent = '建立 Issue';
+    btn.textContent = t('issue.add.create');
   }
   // 開啟移除專案確認 modal
   openRemoveProjectModal() {
@@ -387,7 +449,8 @@ class ProjectManager {
     if (!project) {
       return;
     }
-    document.getElementById('remove-project-name-hint').textContent = `「${project.name}」`;
+    document.getElementById('remove-project-confirm-line').innerHTML =
+      t('project.remove.confirmHint', { name: `<strong>「${project.name}」</strong>` });
     document.getElementById('remove-confirm-input').value = '';
     document.getElementById('confirm-remove-project-btn').disabled = true;
     document.getElementById('remove-project-modal').classList.add('open');
@@ -448,31 +511,36 @@ class ProjectManager {
       try {
         const exists = await this.github.branchExists(project.owner, project.repo, linkedBranch);
         if (!exists) {
-          branchErrorEl.textContent = `找不到 branch「${linkedBranch}」，請確認名稱是否正確`;
+          branchErrorEl.textContent = t('msg.branchNotFound', { name: linkedBranch });
           branchErrorEl.style.display = 'block';
           return;
         }
       } catch (err) {
-        branchErrorEl.textContent = `驗證 branch 失敗: ${err.message}`;
+        branchErrorEl.textContent = t('msg.branchValidateFailed', { msg: err.message });
         branchErrorEl.style.display = 'block';
         return;
       }
     }
     const btn = document.getElementById('confirm-add-issue-btn');
     btn.disabled = true;
-    btn.textContent = '建立中...';
+    btn.textContent = t('state.creating');
     try {
+      await this.ensureLabelsOnce(project.owner, project.repo);
       const randomNum = Math.floor(Math.random() * 9000) + 1000;
       const autoBranchName = `${type}-${randomNum}`;
       const branchName = linkedBranch || autoBranchName;
-      const githubTitle = this.buildGithubTitle(branchName, title, urgency);
-      const issue = await this.github.createIssue(project.owner, project.repo, githubTitle, body, [type]);
+      const issueBody = this.buildIssueBody(body, branchName);
+      const labels = [type, 'status:todo'];
+      if (urgency) {
+        labels.push(`priority:${urgency.toLowerCase()}`);
+      }
+      const issue = await this.github.createIssue(project.owner, project.repo, title, issueBody, labels);
       if (!linkedBranch) {
         try {
           const { sha } = await this.github.getDefaultBranchSHA(project.owner, project.repo);
           await this.github.createBranch(project.owner, project.repo, branchName, sha);
         } catch (branchErr) {
-          this.showMessage(`Issue 已建立，但 branch 建立失敗: ${branchErr.message}`, 'error');
+          this.showMessage(t('msg.initIssueCreated', { msg: branchErr.message }), 'error');
         }
       }
       await this.storage.saveIssue({
@@ -481,15 +549,15 @@ class ProjectManager {
         projectId: this.activeProjectId,
         branchName,
         urgency: urgency || null,
-        status: branchName ? 'todo' : null
+        status: 'todo'
       });
       this.closeAddIssueModal();
       await this.renderIssues();
     } catch (error) {
-      this.showMessage('建立 issue 失敗: ' + error.message, 'error');
+      this.showMessage(t('msg.createIssueFailed', { msg: error.message }), 'error');
     }
     btn.disabled = false;
-    btn.textContent = '建立 Issue';
+    btn.textContent = t('issue.add.create');
   }
   // 回傳 null 表示找不到對應 PR，呼叫方應保留使用者手動設定的狀態，不應覆寫
   computeIssueStatus(branchName, prs) {
@@ -548,21 +616,23 @@ class ProjectManager {
   async renderIssues() {
     const container = document.getElementById('issues-container');
     if (!this.activeProjectId) {
-      this.showEmptyState('請先選擇或新增專案');
+      this.showEmptyState(t('empty.selectProject'));
       return;
     }
     try {
       const issues = await this.storage.getIssuesByProject(this.activeProjectId);
       if (issues.length === 0) {
-        this.showEmptyState('暫無 issues，點擊「重整」來同步，或點「＋ 新增 Issue」');
+        this.showEmptyState(t('empty.noIssues'));
         return;
       }
+      const drafts = await this.storage.getDraftsByProject(this.activeProjectId);
+      const draftSet = new Set(drafts.map(d => d.issueNumber));
       const columns = [
-        { key: 'todo', label: 'Todo' },
-        { key: 'process', label: 'In Progress' },
-        { key: 'review', label: 'In Review' },
-        { key: 'done', label: 'Done' },
-        { key: 'closed', label: 'Closed' }
+        { key: 'todo', label: t('column.todo') },
+        { key: 'process', label: t('column.process') },
+        { key: 'review', label: t('column.review') },
+        { key: 'done', label: t('column.done') },
+        { key: 'closed', label: t('column.closed') }
       ];
       const grouped = { todo: [], process: [], review: [], done: [], closed: [], other: [] };
       issues.forEach(issue => {
@@ -574,7 +644,7 @@ class ProjectManager {
         }
       });
       const hasOther = grouped.other.length > 0;
-      const allColumns = hasOther ? [...columns, { key: 'other', label: '未分類' }] : columns;
+      const allColumns = hasOther ? [...columns, { key: 'other', label: t('column.other') }] : columns;
       const colDotClass = { todo: 'dot-todo', process: 'dot-process', review: 'dot-review', done: 'dot-done', closed: 'dot-closed', other: 'dot-closed' };
       container.innerHTML = `<div class="issues-grid">` +
         allColumns.map(col => `<div class="issues-column">
@@ -586,8 +656,8 @@ class ProjectManager {
             <span class="issues-column-count">${grouped[col.key].length}</span>
           </div>
           <div>${grouped[col.key].length === 0
-            ? '<div class="issues-column-empty">無</div>'
-            : grouped[col.key].map(issue => this.createIssueElement(issue)).join('')
+            ? `<div class="issues-column-empty">${t('column.empty')}</div>`
+            : grouped[col.key].map(issue => this.createIssueElement(issue, draftSet.has(issue.number))).join('')
           }</div>
         </div>`).join('') +
         `</div>`;
@@ -595,15 +665,16 @@ class ProjectManager {
         el.addEventListener('click', () => this.openIssueDetail(Number(el.dataset.issueNumber)));
       });
     } catch (error) {
-      this.showMessage('載入 issues 失敗: ' + error.message, 'error');
+      this.showMessage(t('msg.loadFailed', { msg: error.message }), 'error');
     }
   }
   // 產生單一 issue 卡片的 HTML 字串
-  createIssueElement(issue) {
+  createIssueElement(issue, hasDraft = false) {
     const badge = this.typeBadge(issue.labels);
     const urgency = issue.urgency ? this.urgencyIcon(issue.urgency) : '';
-    return `<div class="issue-item" data-issue-number="${issue.number}">
-      <div class="issue-title" style="display: flex; align-items: center; gap: 5px;">${this.displayTitle(issue.title, issue.branchName, issue.urgency)}${urgency}</div>
+    const draftAttr = hasDraft ? ` data-unsaved-label="${t('issue.detail.unsavedBadge')}"` : '';
+    return `<div class="issue-item${hasDraft ? ' has-draft' : ''}" data-issue-number="${issue.number}"${draftAttr}>
+      <div class="issue-title" style="display: flex; align-items: center; gap: 5px;">${issue.title}${urgency}</div>
       <div class="issue-meta">${badge}</div>
     </div>`;
   }
@@ -616,7 +687,8 @@ class ProjectManager {
     this._detailIssueNumber = issueNumber;
     this._detailProject = project;
     this._detailIssue = null;
-    document.getElementById('issue-detail-title').textContent = '載入中...';
+    this._detailDraft = {};
+    document.getElementById('issue-detail-title').textContent = t('state.loading');
     document.getElementById('issue-detail-meta').innerHTML = '';
     document.getElementById('issue-detail-body').textContent = '';
     document.getElementById('issue-detail-comments').innerHTML = '';
@@ -625,42 +697,62 @@ class ProjectManager {
     try {
       const cached = await this.storage.getIssuesByProject(this.activeProjectId);
       const cachedIssue = cached.find(i => i.number === issueNumber);
-      const requests = [
+      // 一律順便抓 PR（branchName 可能在 body metadata 而非 cache 內，事先無法判斷）
+      const [issue, comments, prs] = await Promise.all([
         this.github.getIssue(project.owner, project.repo, issueNumber),
-        this.github.getIssueComments(project.owner, project.repo, issueNumber)
-      ];
-      if (cachedIssue?.branchName) {
-        requests.push(this.github.getPullRequests(project.owner, project.repo));
-      }
-      const [issue, comments, prs] = await Promise.all(requests);
-      let status = cachedIssue?.status || null;
+        this.github.getIssueComments(project.owner, project.repo, issueNumber),
+        this.github.getPullRequests(project.owner, project.repo)
+      ]);
+      // 從 fresh issue 的 labels / body / legacy title 解析元資料（GitHub 端為真相來源）
+      const parsed = LocalStorage.parseIssueMetadata(issue);
+      let status = parsed.status || cachedIssue?.status || null;
+      const branchName = parsed.branchName || cachedIssue?.branchName || null;
+      const urgency = parsed.urgency || cachedIssue?.urgency || null;
       let needsRerender = false;
       if (cachedIssue && cachedIssue.state !== issue.state) {
         await this.storage.patchIssue(cachedIssue.id, { state: issue.state });
         needsRerender = true;
       }
-      if (prs && cachedIssue?.branchName) {
-        const autoStatus = this.computeIssueStatus(cachedIssue.branchName, prs);
+      if (prs && branchName) {
+        const autoStatus = this.computeIssueStatus(branchName, prs);
         if (autoStatus !== null && autoStatus !== status) {
           status = autoStatus;
-          await this.storage.patchIssue(cachedIssue.id, { status });
+          // 推到 GitHub label，避免本地與 GitHub 不一致
+          try {
+            const newLabels = this.buildIssueLabels(issue.labels, { status, urgency });
+            const result = await this.github.setIssueLabels(project.owner, project.repo, issueNumber, newLabels);
+            issue.labels = result;
+          } catch (e) {
+            // 失敗只記錯誤，繼續本地更新
+          }
+          if (cachedIssue) {
+            await this.storage.patchIssue(cachedIssue.id, { status, labels: issue.labels });
+          }
           needsRerender = true;
         }
       }
       if (needsRerender) {
         await this.renderIssues();
       }
-      const merged = {
+      const baseIssue = {
         ...issue,
-        branchName: cachedIssue?.branchName || null,
-        urgency: cachedIssue?.urgency || null,
+        branchName,
+        urgency,
         status,
         id: cachedIssue?.id || issue.id
       };
-      this._detailIssue = merged;
-      this.renderIssueDetail(merged, comments);
+      this._detailIssue = baseIssue;
+      // 載入該 issue 在 IndexedDB 的草稿（若存在），覆蓋顯示用值
+      const savedDraft = await this.storage.getDraft(this.activeProjectId, issueNumber);
+      this._draftSavedAt = null;
+      if (savedDraft) {
+        const { key, projectId, issueNumber: _n, updatedAt, ...draftFields } = savedDraft;
+        this._detailDraft = draftFields;
+        this._draftSavedAt = updatedAt;
+      }
+      this.refreshDetailFromDraft();
     } catch (error) {
-      document.getElementById('issue-detail-title').textContent = '載入失敗: ' + error.message;
+      document.getElementById('issue-detail-title').textContent = t('msg.loadFailed', { msg: error.message });
     }
   }
   // 切換標題到編輯模式
@@ -671,7 +763,7 @@ class ProjectManager {
     document.getElementById('issue-detail-title').style.display = 'none';
     document.getElementById('issue-title-edit-btn').style.display = 'none';
     const input = document.getElementById('issue-title-edit-input');
-    input.value = this.displayTitle(this._detailIssue.title, this._detailIssue.branchName, this._detailIssue.urgency) || '';
+    input.value = this._detailIssue.title || '';
     input.style.display = '';
     document.getElementById('issue-title-save-btn').style.display = '';
     document.getElementById('issue-title-cancel-btn').style.display = '';
@@ -686,35 +778,18 @@ class ProjectManager {
     document.getElementById('issue-title-save-btn').style.display = 'none';
     document.getElementById('issue-title-cancel-btn').style.display = 'none';
   }
-  // 儲存編輯後的標題到 GitHub
-  async saveTitleEdit() {
-    if (!this._detailIssue || !this._detailProject || !this.github) {
+  // 儲存編輯後的標題到 draft（不立即送 GitHub）
+  saveTitleEdit() {
+    if (!this._detailIssue) {
       return;
     }
     const newTitle = document.getElementById('issue-title-edit-input').value.trim();
     if (!newTitle) {
       return;
     }
-    const btn = document.getElementById('issue-title-save-btn');
-    btn.disabled = true;
-    btn.textContent = '儲存中...';
-    try {
-      const githubTitle = this.buildGithubTitle(this._detailIssue.branchName, newTitle, this._detailIssue.urgency);
-      await this.github.updateIssue(
-        this._detailProject.owner, this._detailProject.repo,
-        this._detailIssue.number, { title: githubTitle }
-      );
-      this._detailIssue.title = githubTitle;
-      await this.storage.patchIssue(this._detailIssue.id, { title: githubTitle });
-      document.getElementById('issue-detail-title').textContent =
-        newTitle;
-      this.cancelTitleEditMode();
-      await this.renderIssues();
-    } catch (error) {
-      this.showMessage('儲存失敗: ' + error.message, 'error');
-    }
-    btn.disabled = false;
-    btn.textContent = '儲存';
+    this._detailDraft.title = newTitle;
+    document.getElementById('issue-detail-title').textContent = newTitle;
+    this.cancelTitleEditMode();
   }
   // 切換說明到編輯模式
   enterBodyEditMode() {
@@ -724,7 +799,7 @@ class ProjectManager {
     document.getElementById('issue-detail-body').style.display = 'none';
     document.getElementById('issue-body-edit-btn').style.display = 'none';
     const textarea = document.getElementById('issue-body-edit-input');
-    textarea.value = this._detailIssue.body || '';
+    textarea.value = this.displayBody(this._detailIssue.body);
     textarea.style.display = '';
     document.getElementById('issue-body-edit-actions').style.display = 'flex';
     textarea.focus();
@@ -736,29 +811,15 @@ class ProjectManager {
     document.getElementById('issue-body-edit-input').style.display = 'none';
     document.getElementById('issue-body-edit-actions').style.display = 'none';
   }
-  // 儲存編輯後的說明到 GitHub
-  async saveIssueBody() {
-    if (!this._detailIssue || !this._detailProject || !this.github) {
+  // 儲存編輯後的說明到 draft
+  saveIssueBody() {
+    if (!this._detailIssue) {
       return;
     }
-    const newBody = document.getElementById('issue-body-edit-input').value.trim();
-    const btn = document.getElementById('issue-body-save-btn');
-    btn.disabled = true;
-    btn.textContent = '儲存中...';
-    try {
-      await this.github.updateIssue(
-        this._detailProject.owner, this._detailProject.repo,
-        this._detailIssue.number, { body: newBody }
-      );
-      this._detailIssue.body = newBody;
-      await this.storage.patchIssue(this._detailIssue.id, { body: newBody });
-      document.getElementById('issue-detail-body').textContent = newBody || '（無說明）';
-      this.cancelBodyEditMode();
-    } catch (error) {
-      this.showMessage('儲存失敗: ' + error.message, 'error');
-    }
-    btn.disabled = false;
-    btn.textContent = '儲存';
+    const newDisplayBody = document.getElementById('issue-body-edit-input').value.trim();
+    this._detailDraft.body = newDisplayBody;
+    document.getElementById('issue-detail-body').textContent = newDisplayBody || t('issue.detail.noBody');
+    this.cancelBodyEditMode();
   }
   // 將 issue 資料與留言填入詳情 modal
   renderIssueDetail(issue, comments) {
@@ -766,16 +827,30 @@ class ProjectManager {
     this.cancelTitleEditMode();
     this.cancelBodyEditMode();
     this.closeLinkBranchForm();
-    const labels = issue.labels.map(l => `<span class="issue-label">${l.name}</span>`).join('');
-    const state = issue.state === 'open' ? '開啟' : '關閉';
-    document.getElementById('issue-detail-title').textContent = this.displayTitle(issue.title, issue.branchName, issue.urgency);
+    // 草稿提示橫幅：僅當有從 IndexedDB 載入的舊 draft 時顯示
+    const banner = document.getElementById('issue-draft-banner');
+    if (this._draftSavedAt) {
+      banner.style.display = 'flex';
+      document.getElementById('issue-draft-banner-text').textContent =
+        t('issue.detail.draftBanner', { time: this.formatRelativeTime(this._draftSavedAt) });
+    } else {
+      banner.style.display = 'none';
+    }
+    // 過濾掉系統 labels（status:* / priority:*），只顯示 type 等使用者 label
+    const visibleLabels = (issue.labels || []).filter(l => {
+      const name = typeof l === 'string' ? l : l.name;
+      return !name.startsWith('status:') && !name.startsWith('priority:');
+    });
+    const labels = visibleLabels.map(l => `<span class="issue-label">${typeof l === 'string' ? l : l.name}</span>`).join('');
+    const state = issue.state;
+    document.getElementById('issue-detail-title').textContent = issue.title;
     const iconClipboard = `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>`;
     const iconBranch = `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="15"></line><circle cx="18" cy="6" r="3"></circle><circle cx="6" cy="18" r="3"></circle><path d="M18 9a9 9 0 0 1-9 9"></path></svg>`;
     const branchPart = issue.branchName ? `
       <span style="display: inline-flex; align-items: center; gap: 4px; color: var(--text-muted); font-size: 12px; margin-left: 4px;">
         ${iconBranch}
         <span id="issue-branch-display" style="font-family: monospace;">${issue.branchName}</span>
-        <button id="copy-branch-btn" class="copy-btn" title="複製 branch 名稱">${iconClipboard}</button>
+        <button id="copy-branch-btn" class="copy-btn" title="${t('issue.detail.copyBranch')}">${iconClipboard}</button>
       </span>` : '';
     const statusDropdown = issue.branchName ? `
       <div style="position: relative; display: inline-flex;">
@@ -785,7 +860,7 @@ class ProjectManager {
         </button>
         <div id="issue-status-dropdown-menu" style="display: none; position: absolute; top: calc(100% + 4px); left: 0; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 4px 16px rgba(0,0,0,0.15); z-index: 250; overflow: hidden; min-width: 130px;"></div>
       </div>` : '';
-    const linkBranchBtn = !issue.branchName ? `<button id="link-branch-btn" class="copy-btn" title="連結現有 branch" style="display: inline-flex; align-items: center; gap: 4px; padding: 2px 7px; border: 1px dashed var(--border); border-radius: 10px; font-size: 11px; color: var(--text-secondary);">${iconBranch} ＋</button>` : '';
+    const linkBranchBtn = !issue.branchName ? `<button id="link-branch-btn" class="copy-btn" title="${t('issue.detail.linkBranch')}" style="display: inline-flex; align-items: center; gap: 4px; padding: 2px 7px; border: 1px dashed var(--border); border-radius: 10px; font-size: 11px; color: var(--text-secondary);">${iconBranch} ＋</button>` : '';
     const urgencyBtnContent = issue.urgency
       ? this.urgencyIcon(issue.urgency)
       : `<span style="font-size: 11px; color: var(--text-secondary);">Priority</span>`;
@@ -795,7 +870,7 @@ class ProjectManager {
     </div>`;
     document.getElementById('issue-detail-meta').innerHTML = `${labels}${statusDropdown}${urgencyDropdown}${branchPart}${linkBranchBtn}`;
     document.getElementById('issue-detail-toggle-btn').textContent =
-      issue.state === 'open' ? '設為關閉' : '重新開啟';
+      issue.state === 'open' ? t('issue.detail.markClosed') : t('issue.detail.reopen');
     if (issue.branchName) {
       document.getElementById('issue-status-dropdown-btn').addEventListener('click', (e) => {
         e.stopPropagation();
@@ -855,10 +930,10 @@ class ProjectManager {
         this.closeUrgencyDropdown();
       });
     });
-    document.getElementById('issue-detail-body').textContent = issue.body || '（無說明）';
+    document.getElementById('issue-detail-body').textContent = this.displayBody(issue.body) || t('issue.detail.noBody');
     const commentsEl = document.getElementById('issue-detail-comments');
     if (comments.length === 0) {
-      commentsEl.innerHTML = '<div style="font-size: 13px; color: var(--text-muted);">尚無留言</div>';
+      commentsEl.innerHTML = `<div style="font-size: 13px; color: var(--text-muted);">${t('issue.detail.noComments')}</div>`;
     } else {
       commentsEl.innerHTML = comments.map(c => {
         const date = new Date(c.created_at).toLocaleString('zh-TW');
@@ -884,13 +959,177 @@ class ProjectManager {
       btn.innerHTML = iconClipboard;
     }, 1500);
   }
-  // 關閉 issue 詳情 modal 並清空暫存狀態
+  // 關閉 issue 詳情 modal 並清空暫存狀態（不觸發 API 與草稿儲存）
   closeIssueDetail() {
     document.getElementById('issue-detail-modal').classList.remove('open');
     this._detailIssue = null;
     this._detailIssueNumber = null;
     this._detailProject = null;
     this._detailComments = null;
+    this._detailDraft = null;
+    this._draftSavedAt = null;
+  }
+  // 將 _detailIssue 與 _detailDraft 合併成顯示用的 issue 物件
+  mergedDetailIssue() {
+    const issue = this._detailIssue;
+    if (!issue) {
+      return null;
+    }
+    const draft = this._detailDraft || {};
+    const branchName = 'branchName' in draft ? draft.branchName : issue.branchName;
+    const displayBody = 'body' in draft ? draft.body : this.displayBody(issue.body);
+    return {
+      ...issue,
+      title: 'title' in draft ? draft.title : issue.title,
+      body: this.buildIssueBody(displayBody, branchName),
+      state: 'state' in draft ? draft.state : issue.state,
+      status: 'status' in draft ? draft.status : issue.status,
+      urgency: 'urgency' in draft ? draft.urgency : issue.urgency,
+      branchName
+    };
+  }
+  // 用目前 draft 重新渲染 detail modal
+  refreshDetailFromDraft() {
+    const merged = this.mergedDetailIssue();
+    if (merged) {
+      this.renderIssueDetail(merged, this._detailComments || []);
+    }
+  }
+  // 草稿是否有任何欄位異動
+  hasDraftChanges() {
+    return this._detailDraft && Object.keys(this._detailDraft).length > 0;
+  }
+  // 把 draft 寫入 IndexedDB（modal 外部點擊或 commit 失敗時的 fallback）
+  async persistDraft() {
+    if (!this._detailIssue || !this.hasDraftChanges()) {
+      return;
+    }
+    await this.storage.saveDraft(this.activeProjectId, this._detailIssue.number, this._detailDraft);
+  }
+  // 把 draft 一次送到 GitHub。可傳入 snapshot 讓背景送出（modal 已關閉時用），不傳則用目前 detail state
+  async commitDraft(issueArg, projectArg, draftArg, projectIdArg) {
+    const issue = issueArg || this._detailIssue;
+    const project = projectArg || this._detailProject;
+    const draft = draftArg !== undefined ? draftArg : this._detailDraft;
+    const projectId = projectIdArg || this.activeProjectId;
+    if (!issue || !project || !this.github) {
+      return true;
+    }
+    if (!draft || Object.keys(draft).length === 0) {
+      // 沒變更也順便清掉舊 draft（萬一前次留下）
+      await this.storage.deleteDraft(projectId, issue.number);
+      return true;
+    }
+    const patch = {};
+    if ('title' in draft) {
+      patch.title = draft.title;
+    }
+    if ('state' in draft) {
+      patch.state = draft.state;
+    }
+    if ('body' in draft || 'branchName' in draft) {
+      const displayBody = 'body' in draft ? draft.body : this.displayBody(issue.body);
+      const branchName = 'branchName' in draft ? draft.branchName : issue.branchName;
+      patch.body = this.buildIssueBody(displayBody, branchName);
+    }
+    const labelsChanged = 'status' in draft || 'urgency' in draft;
+    const finalStatus = 'status' in draft ? draft.status : issue.status;
+    const finalUrgency = 'urgency' in draft ? draft.urgency : issue.urgency;
+    const newLabels = labelsChanged ? this.buildIssueLabels(issue.labels, { status: finalStatus, urgency: finalUrgency }) : null;
+    try {
+      let updatedIssue = null;
+      if (Object.keys(patch).length > 0) {
+        updatedIssue = await this.github.updateIssue(project.owner, project.repo, issue.number, patch);
+      }
+      let updatedLabels = null;
+      if (newLabels) {
+        await this.ensureLabelsOnce(project.owner, project.repo);
+        updatedLabels = await this.github.setIssueLabels(project.owner, project.repo, issue.number, newLabels);
+      }
+      // 同步本地快取
+      const cached = await this.storage.getIssuesByProject(projectId);
+      const match = cached.find(i => i.number === issue.number);
+      if (match) {
+        const localPatch = {};
+        if (updatedIssue) {
+          localPatch.title = updatedIssue.title;
+          localPatch.body = updatedIssue.body;
+          localPatch.state = updatedIssue.state;
+        }
+        if (updatedLabels) {
+          localPatch.labels = updatedLabels;
+        }
+        if ('status' in draft) {
+          localPatch.status = draft.status;
+        }
+        if ('urgency' in draft) {
+          localPatch.urgency = draft.urgency;
+        }
+        if ('branchName' in draft) {
+          localPatch.branchName = draft.branchName;
+        }
+        if (Object.keys(localPatch).length > 0) {
+          await this.storage.patchIssue(match.id, localPatch);
+        }
+      }
+      await this.storage.deleteDraft(projectId, issue.number);
+      return true;
+    } catch (e) {
+      this.showMessage(t('msg.commitFailed', { msg: e.message }), 'error');
+      // commit 失敗時 fallback 存成 draft（用 snapshot 而非 this._，避免 modal 已關閉時 NPE）
+      await this.storage.saveDraft(projectId, issue.number, draft);
+      return false;
+    }
+  }
+  // 點 X：立即關閉 modal，背景送 commit（API 失敗會自動 fallback 為 draft）
+  async commitDraftAndClose() {
+    const issueSnapshot = this._detailIssue;
+    const projectSnapshot = this._detailProject;
+    const draftSnapshot = this._detailDraft;
+    const projectIdSnapshot = this.activeProjectId;
+    this.closeIssueDetail();
+    await this.renderIssues();
+    if (!issueSnapshot || !draftSnapshot || Object.keys(draftSnapshot).length === 0) {
+      return;
+    }
+    // 不 await：fire-and-forget，讓 UI 立即跳走
+    this.commitDraft(issueSnapshot, projectSnapshot, draftSnapshot, projectIdSnapshot)
+      .then(() => this.renderIssues())
+      .catch(() => {});
+  }
+  // 點 modal 外：存 draft 然後關閉
+  async saveDraftAndClose() {
+    await this.persistDraft();
+    this.closeIssueDetail();
+    await this.renderIssues();
+  }
+  // 捨棄目前 issue 的 draft
+  async discardDraft() {
+    if (!this._detailIssue) {
+      return;
+    }
+    await this.storage.deleteDraft(this.activeProjectId, this._detailIssue.number);
+    this._detailDraft = {};
+    this._draftSavedAt = null;
+    this.refreshDetailFromDraft();
+    await this.renderIssues();
+  }
+  // 把 timestamp 轉換成「X 分鐘前 / X 小時前 / X 天前」
+  formatRelativeTime(timestamp) {
+    const diff = Date.now() - timestamp;
+    const min = Math.floor(diff / 60000);
+    if (min < 1) {
+      return t('time.justNow');
+    }
+    if (min < 60) {
+      return t('time.minAgo', { n: min });
+    }
+    const hr = Math.floor(min / 60);
+    if (hr < 24) {
+      return t('time.hourAgo', { n: hr });
+    }
+    const day = Math.floor(hr / 24);
+    return t('time.dayAgo', { n: day });
   }
   // 收起 branch 連結輸入列並清空
   closeLinkBranchForm() {
@@ -912,118 +1151,64 @@ class ProjectManager {
     }
     const btn = document.getElementById('issue-link-branch-save-btn');
     btn.disabled = true;
-    btn.textContent = '驗證中...';
+    btn.textContent = t('state.validating');
     try {
       const exists = await this.github.branchExists(
         this._detailProject.owner, this._detailProject.repo, branchName
       );
       if (!exists) {
-        this.showMessage(`找不到 branch「${branchName}」，請確認名稱是否正確`, 'error');
+        this.showMessage(t('msg.branchNotFound', { name: branchName }), 'error');
         btn.disabled = false;
-        btn.textContent = '連結';
+        btn.textContent = t('modal.link');
         return;
       }
-      const cached = await this.storage.getIssuesByProject(this.activeProjectId);
-      const match = cached.find(i => i.number === this._detailIssue.number);
-      if (!match) {
-        throw new Error('找不到對應的 issue');
-      }
-      const currentDisplayTitle = this.displayTitle(this._detailIssue.title, null, this._detailIssue.urgency);
-      const githubTitle = this.buildGithubTitle(branchName, currentDisplayTitle, this._detailIssue.urgency);
-      await this.github.updateIssue(
-        this._detailProject.owner, this._detailProject.repo,
-        this._detailIssue.number, { title: githubTitle }
-      );
-      await this.storage.patchIssue(match.id, { branchName, title: githubTitle });
-      this._detailIssue.branchName = branchName;
-      this._detailIssue.title = githubTitle;
-      this._detailIssue.id = match.id;
-      this.renderIssueDetail(this._detailIssue, this._detailComments || []);
-      await this.renderIssues();
+      // branch 驗證成功後寫入 draft，由 commit 階段送 GitHub
+      this._detailDraft.branchName = branchName;
+      this.closeLinkBranchForm();
+      this.refreshDetailFromDraft();
     } catch (error) {
-      this.showMessage('連結失敗: ' + error.message, 'error');
+      this.showMessage(t('msg.linkFailed', { msg: error.message }), 'error');
       btn.disabled = false;
-      btn.textContent = '連結';
+      btn.textContent = t('modal.link');
     }
   }
-  // 更新 issue Urgent度：同步更新 GitHub title 並儲存到本地
-  async updateUrgency(newUrgency) {
-    if (!this._detailIssue || !this._detailProject || !this.github) {
-      return;
-    }
-    const currentDisplayTitle = this.displayTitle(
-      this._detailIssue.title, this._detailIssue.branchName, this._detailIssue.urgency
-    );
-    const githubTitle = this.buildGithubTitle(
-      this._detailIssue.branchName, currentDisplayTitle, newUrgency
-    );
-    try {
-      await this.github.updateIssue(
-        this._detailProject.owner, this._detailProject.repo,
-        this._detailIssue.number, { title: githubTitle }
-      );
-      this._detailIssue.urgency = newUrgency || null;
-      this._detailIssue.title = githubTitle;
-      await this.storage.patchIssue(this._detailIssue.id, { urgency: newUrgency || null, title: githubTitle });
-      this.renderIssueDetail(this._detailIssue, this._detailComments || []);
-      await this.renderIssues();
-    } catch (error) {
-      this.showMessage('更新緊急度失敗: ' + error.message, 'error');
-    }
-  }
-  // 更新 issue 本地進度並重新渲染列表
-  async updateLocalStatus(newStatus) {
+  // 更新 issue 緊急度到 draft
+  updateUrgency(newUrgency) {
     if (!this._detailIssue) {
       return;
     }
-    this._detailIssue.status = newStatus;
-    await this.storage.patchIssue(this._detailIssue.id, { status: newStatus });
+    this._detailDraft.urgency = newUrgency || null;
+    this.refreshDetailFromDraft();
+  }
+  // 更新 issue 進度到 draft
+  updateLocalStatus(newStatus) {
+    if (!this._detailIssue) {
+      return;
+    }
+    this._detailDraft.status = newStatus;
     const dot = document.getElementById('issue-status-dot');
     if (dot) {
       dot.className = `status-dot ${this.statusDotClass(newStatus)}`;
     }
-    await this.renderIssues();
   }
   // 在 GitHub 切換 issue 的開啟/關閉狀態
-  async toggleIssueState() {
-    if (!this._detailIssue || !this._detailProject || !this.github) {
+  // 切換 issue 狀態到 draft（open ↔ closed）
+  toggleIssueState() {
+    if (!this._detailIssue) {
       return;
     }
-    const btn = document.getElementById('issue-detail-toggle-btn');
-    btn.disabled = true;
-    const newState = this._detailIssue.state === 'open' ? 'closed' : 'open';
-    try {
-      const updated = await this.github.updateIssue(
-        this._detailProject.owner, this._detailProject.repo,
-        this._detailIssueNumber, { state: newState }
-      );
-      const issues = await this.github.getIssues(this._detailProject.owner, this._detailProject.repo);
-      await this.storage.saveProjectIssues(this.activeProjectId, issues);
-      const merged = {
-        ...updated,
-        branchName: this._detailIssue.branchName,
-        urgency: this._detailIssue.urgency,
-        status: this._detailIssue.status,
-        id: this._detailIssue.id
-      };
-      this._detailIssue = merged;
-      const comments = await this.github.getIssueComments(
-        this._detailProject.owner, this._detailProject.repo, this._detailIssueNumber
-      );
-      this.renderIssueDetail(merged, comments);
-      await this.renderIssues();
-    } catch (error) {
-      this.showMessage('操作失敗: ' + error.message, 'error');
-    }
-    btn.disabled = false;
+    const merged = this.mergedDetailIssue();
+    const newState = merged.state === 'open' ? 'closed' : 'open';
+    this._detailDraft.state = newState;
+    document.getElementById('issue-detail-toggle-btn').textContent =
+      newState === 'open' ? t('issue.detail.markClosed') : t('issue.detail.reopen');
   }
   // 開啟刪除 issue 確認 modal
   openDeleteIssueModal() {
     if (!this._detailIssue) {
       return;
     }
-    document.getElementById('delete-issue-name-hint').textContent =
-      this.displayTitle(this._detailIssue.title, this._detailIssue.branchName, this._detailIssue.urgency);
+    document.getElementById('delete-issue-name-hint').textContent = this._detailIssue.title;
     document.getElementById('delete-issue-modal').classList.add('open');
   }
   // 關閉刪除 issue modal
@@ -1039,7 +1224,7 @@ class ProjectManager {
     const btn = document.getElementById('confirm-delete-issue-btn');
     const errEl = document.getElementById('delete-issue-error');
     btn.disabled = true;
-    btn.textContent = '刪除中...';
+    btn.textContent = t('state.deleting');
     errEl.style.display = 'none';
     try {
       await this.github.deleteIssue(this._detailIssue.node_id);
@@ -1048,14 +1233,16 @@ class ProjectManager {
       if (match) {
         await this.storage.deleteIssue(match.id);
       }
+      // 一併清掉該 issue 的草稿，避免之後切回時看到孤兒 draft
+      await this.storage.deleteDraft(this.activeProjectId, this._detailIssue.number);
       this.closeDeleteIssueModal();
       this.closeIssueDetail();
       await this.renderIssues();
     } catch (error) {
-      errEl.textContent = '刪除失敗：' + error.message;
+      errEl.textContent = t('msg.deleteFailed', { msg: error.message });
       errEl.style.display = 'block';
       btn.disabled = false;
-      btn.textContent = '確認刪除';
+      btn.textContent = t('modal.confirmDelete');
     }
   }
   // 送出留言到 GitHub 並更新顯示
@@ -1078,7 +1265,7 @@ class ProjectManager {
       );
       this.renderIssueDetail(this._detailIssue, comments);
     } catch (error) {
-      this.showMessage('留言失敗: ' + error.message, 'error');
+      this.showMessage(t('msg.commentFailed', { msg: error.message }), 'error');
     }
     btn.disabled = false;
     btn.style.opacity = '';
@@ -1094,7 +1281,7 @@ class ProjectManager {
     }
     const btn = document.getElementById('refresh-btn');
     btn.disabled = true;
-    btn.textContent = '同步中...';
+    btn.textContent = t('state.syncing');
     try {
       const [issues, prs] = await Promise.all([
         this.github.getIssues(project.owner, project.repo),
@@ -1107,16 +1294,24 @@ class ProjectManager {
           continue;
         }
         const autoStatus = this.computeIssueStatus(ci.branchName, prs);
-        if (autoStatus !== null) {
-          await this.storage.patchIssue(ci.id, { status: autoStatus });
+        if (autoStatus !== null && autoStatus !== ci.status) {
+          // 同步把新 status 推到 GitHub label，避免本地與 GitHub 不一致
+          try {
+            const newLabels = this.buildIssueLabels(ci.labels, { status: autoStatus, urgency: ci.urgency });
+            const result = await this.github.setIssueLabels(project.owner, project.repo, ci.number, newLabels);
+            await this.storage.patchIssue(ci.id, { status: autoStatus, labels: result });
+          } catch (e) {
+            // label 更新失敗不阻擋整體 refresh，只更新本地
+            await this.storage.patchIssue(ci.id, { status: autoStatus });
+          }
         }
       }
       await this.storage.setLastSync(this.activeProjectId, Date.now());
       await this.renderIssues();
     } catch (error) {
-      this.showMessage('同步失敗: ' + error.message, 'error');
+      this.showMessage(t('msg.syncFailed', { msg: error.message }), 'error');
     }
-    btn.textContent = '重整';
+    btn.textContent = t('app.refresh');
     btn.disabled = false;
   }
   // 在頁首顯示錯誤或一般訊息提示

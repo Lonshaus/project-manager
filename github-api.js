@@ -220,6 +220,25 @@ class GitHubAPI {
     }
     return response.json();
   }
+  // 檢查指定 repo 是否存在（404 視為不存在，其他錯誤照丟）
+  async repoExists(owner, repo) {
+    const response = await fetch(
+      `${this.baseURL}/repos/${owner}/${repo}`,
+      {
+        headers: {
+          'Authorization': `token ${this.token}`,
+          'Accept': 'application/vnd.github.v3+json'
+        }
+      }
+    );
+    if (response.status === 404) {
+      return false;
+    }
+    if (!response.ok) {
+      throw new Error(`GitHub API error: ${response.status}`);
+    }
+    return true;
+  }
   // 檢查指定 branch 是否存在於 repo
   async branchExists(owner, repo, branchName) {
     const response = await fetch(
@@ -256,5 +275,55 @@ class GitHubAPI {
     if (!response.ok && response.status !== 422) {
       throw new Error(`GitHub API error: ${response.status}`);
     }
+  }
+  // 整組替換 issue 的 labels（一次 PATCH）
+  async setIssueLabels(owner, repo, issueNumber, labels) {
+    const response = await fetch(
+      `${this.baseURL}/repos/${owner}/${repo}/issues/${issueNumber}/labels`,
+      {
+        method: 'PUT',
+        headers: {
+          'Authorization': `token ${this.token}`,
+          'Accept': 'application/vnd.github.v3+json'
+        },
+        body: JSON.stringify({ labels })
+      }
+    );
+    if (!response.ok) {
+      throw new Error(`GitHub API error: ${response.status}`);
+    }
+    return response.json();
+  }
+  // 確保系統 labels 都存在（status:* 與 priority:*）。先 GET 列表比對，只 POST 缺的，避免 422 雜訊
+  async ensureSystemLabels(owner, repo) {
+    const required = [
+      { name: 'status:todo', color: 'ededed' },
+      { name: 'status:process', color: 'eab308' },
+      { name: 'status:review', color: '4caf50' },
+      { name: 'status:done', color: '2196f3' },
+      { name: 'priority:low', color: 'fee2e2' },
+      { name: 'priority:medium', color: 'fca5a5' },
+      { name: 'priority:high', color: 'ef4444' },
+      { name: 'priority:urgent', color: '991b1b' }
+    ];
+    const response = await fetch(
+      `${this.baseURL}/repos/${owner}/${repo}/labels?per_page=100`,
+      {
+        headers: {
+          'Authorization': `token ${this.token}`,
+          'Accept': 'application/vnd.github.v3+json'
+        }
+      }
+    );
+    if (!response.ok) {
+      throw new Error(`GitHub API error: ${response.status}`);
+    }
+    const existing = await response.json();
+    const existingNames = new Set(existing.map(l => l.name));
+    const missing = required.filter(l => !existingNames.has(l.name));
+    if (missing.length === 0) {
+      return;
+    }
+    await Promise.all(missing.map(l => this.createLabel(owner, repo, l.name, l.color)));
   }
 }

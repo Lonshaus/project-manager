@@ -10,13 +10,15 @@ class SettingsPanel {
     document.getElementById('settings-overlay').addEventListener('click', () => this.close());
     document.getElementById('save-account-btn').addEventListener('click', () => this.saveAccount());
     document.getElementById('settings-theme').addEventListener('change', (e) => this.saveTheme(e.target.value));
+    document.getElementById('settings-language').addEventListener('change', (e) => this.saveLanguage(e.target.value));
   }
   // 開啟設定面板並填入現有設定
   async open() {
-    const { githubToken, owner, theme } = await chrome.storage.sync.get(['githubToken', 'owner', 'theme']);
+    const { githubToken, owner, theme, language } = await chrome.storage.sync.get(['githubToken', 'owner', 'theme', 'language']);
     document.getElementById('settings-owner').value = owner || '';
     document.getElementById('settings-token').value = githubToken || '';
     document.getElementById('settings-theme').value = theme || 'system';
+    document.getElementById('settings-language').value = language || '';
     document.getElementById('settings-panel').classList.add('open');
     document.getElementById('settings-overlay').classList.add('open');
   }
@@ -33,7 +35,7 @@ class SettingsPanel {
       return;
     }
     await chrome.storage.sync.set({ owner, githubToken: token });
-    this.showTokenMessage('帳戶設定已保存');
+    this.showTokenMessage(t('msg.accountSaved'));
   }
   // 顯示帳戶儲存成功的短暫提示
   showTokenMessage(text) {
@@ -52,5 +54,10 @@ class SettingsPanel {
     } else {
       document.documentElement.setAttribute('data-theme', theme);
     }
+  }
+  // 儲存語系設定，重新載入頁面以套用（並保持設定面板開啟）
+  async saveLanguage(locale) {
+    await setUserLocale(locale);
+    window.location.href = `${window.location.pathname}?settings=open`;
   }
 }
