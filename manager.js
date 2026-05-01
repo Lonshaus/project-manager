@@ -757,9 +757,17 @@ class ProjectManager {
           <span class="issue-sub-progress-text">${completed}/${total}</span>
         </div>`
       : '';
+    // closed 顯示 closed_at + closed prefix；open 顯示 updated_at + updated prefix
+    const ts = issue.state === 'closed'
+      ? (issue.closed_at ? new Date(issue.closed_at).getTime() : null)
+      : (issue.updated_at ? new Date(issue.updated_at).getTime() : null);
+    const tsPrefix = issue.state === 'closed' ? t('issue.card.closed') : t('issue.card.updated');
+    const timeLabel = ts
+      ? `<span class="issue-time" title="${tsPrefix} ${new Date(ts).toLocaleString()}">${tsPrefix} ${this.formatRelativeTime(ts)}</span>`
+      : '';
     return `<div class="issue-item${hasDraft ? ' has-draft' : ''}" data-issue-number="${issue.number}"${draftAttr}>
       <div class="issue-title" style="display: flex; align-items: center; gap: 5px;">${issue.title}${urgency}</div>
-      <div class="issue-meta">${badge}${parentBadge}</div>
+      <div class="issue-meta">${badge}${parentBadge}${timeLabel}</div>
       ${subProgress}
     </div>`;
   }
