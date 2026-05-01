@@ -116,8 +116,33 @@ const I18N_STRINGS = {
     'msg.accountSaved': 'Account settings saved',
     'msg.tokenInputRequired': 'Please enter token',
     'msg.usernameInputRequired': 'Please enter GitHub Username',
-    'init.issueAutoBody': 'Auto-created initialization issue for this project.',
-    'init.issueAutoTitle': 'Project Init'
+    'init.issueAutoBody': `This issue was auto-created by the Project Manager extension to mark the project's starting point.
+
+## Project Purpose
+(Please edit to describe what this project does)
+
+## Labels & Metadata Conventions
+- \`status:*\` — issue board columns (todo / process / review / done)
+- \`priority:*\` — urgency level (low / medium / high / urgent)
+- The \`<!-- pm-meta: {...} -->\` comment at the end of issue body stores the linked branch name; do not delete it manually`,
+    'init.issueAutoTitle': 'Project Init',
+    'init.bodyTemplate': `## Project Purpose
+(One sentence: what problem does this project solve, or what value does it provide?)
+
+## Use Cases
+(Who uses it? When?)
+
+## Tech Stack
+- Language / framework:
+- Data storage:
+- Deployment:
+
+---
+
+> This issue is maintained by the Project Manager extension:
+> - \`status:*\` labels map to board columns
+> - \`priority:*\` labels indicate urgency
+> - The \`<!-- pm-meta -->\` comment at the end stores the linked branch; do not delete it manually`
   },
   'zh-TW': {
     'app.openManager': '開啟專案管理',
@@ -235,8 +260,33 @@ const I18N_STRINGS = {
     'msg.accountSaved': '帳戶設定已保存',
     'msg.tokenInputRequired': '請輸入 token',
     'msg.usernameInputRequired': '請輸入 GitHub Username',
-    'init.issueAutoBody': '此專案的初始化 issue，自動建立。',
-    'init.issueAutoTitle': '專案初始化'
+    'init.issueAutoBody': `此 issue 由 Project Manager 擴充功能自動建立，標記專案起點。
+
+## 專案目的
+（請編輯說明本專案在做什麼）
+
+## 標籤與 metadata 約定
+- \`status:*\` — issue 看板欄位（todo / process / review / done）
+- \`priority:*\` — 緊急度（low / medium / high / urgent）
+- Issue body 結尾的 \`<!-- pm-meta: {...} -->\` 註解儲存連結的 branch 名稱，請勿手動刪除`,
+    'init.issueAutoTitle': '專案初始化',
+    'init.bodyTemplate': `## 專案目的
+（一句話說明這個專案要解決什麼問題或提供什麼價值）
+
+## 使用情境
+（誰會用？什麼時候用？）
+
+## 技術堆疊
+- 主要語言／框架：
+- 資料儲存：
+- 部署：
+
+---
+
+> 此 issue 由 Project Manager 擴充功能維護專案元資料：
+> - \`status:*\` labels 對應看板欄位
+> - \`priority:*\` labels 標示緊急度
+> - body 結尾的 \`<!-- pm-meta -->\` 為 branch 連結，請勿手動刪除`
   },
   ja: {
     'app.openManager': 'プロジェクト管理を開く',
@@ -354,8 +404,33 @@ const I18N_STRINGS = {
     'msg.accountSaved': 'アカウント設定を保存しました',
     'msg.tokenInputRequired': 'tokenを入力してください',
     'msg.usernameInputRequired': 'GitHub Usernameを入力してください',
-    'init.issueAutoBody': 'このプロジェクトの初期化Issue（自動作成）。',
-    'init.issueAutoTitle': 'プロジェクト初期化'
+    'init.issueAutoBody': `このissueはProject Manager拡張機能によって自動作成され、プロジェクトの起点を示します。
+
+## プロジェクトの目的
+（このプロジェクトが何をするのか説明してください）
+
+## ラベルとメタデータの規約
+- \`status:*\` — issueボードのカラム（todo / process / review / done）
+- \`priority:*\` — 緊急度（low / medium / high / urgent）
+- issue body末尾の \`<!-- pm-meta: {...} -->\` コメントはリンクされたbranch名を保存します。手動で削除しないでください`,
+    'init.issueAutoTitle': 'プロジェクト初期化',
+    'init.bodyTemplate': `## プロジェクトの目的
+（このプロジェクトが解決する問題や提供する価値を一文で）
+
+## ユースケース
+（誰が、いつ使う？）
+
+## 技術スタック
+- 言語／フレームワーク：
+- データストア：
+- デプロイ：
+
+---
+
+> このissueはProject Manager拡張機能によってメタデータが管理されています：
+> - \`status:*\` ラベルはボードカラムに対応
+> - \`priority:*\` ラベルは緊急度を示します
+> - body末尾の \`<!-- pm-meta -->\` はリンクされたbranchです。手動で削除しないでください`
   }
 };
 // 從 chrome.i18n 偵測使用者語言，無支援語系時退回 en
