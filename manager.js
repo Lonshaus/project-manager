@@ -64,7 +64,6 @@ class ProjectManager {
         this.saveDraftAndClose();
       }
     });
-    document.getElementById('issue-detail-toggle-btn').addEventListener('click', () => this.toggleIssueState());
     document.getElementById('issue-detail-delete-btn').addEventListener('click', () => this.openDeleteIssueModal());
     document.getElementById('issue-comment-submit-btn').addEventListener('click', () => this.submitComment());
     document.getElementById('close-delete-issue-btn').addEventListener('click', () => this.closeDeleteIssueModal());
@@ -268,16 +267,22 @@ class ProjectManager {
     const meta = JSON.stringify({ branch: branchName });
     return cleaned ? `${cleaned}\n\n<!-- pm-meta: ${meta} -->` : `<!-- pm-meta: ${meta} -->`;
   }
-  // 在現有 labels 上替換 status:* 與 priority:*，保留其他（type 等）
-  buildIssueLabels(currentLabels, { status, urgency }) {
+  // 在現有 labels 上替換 status:* / priority:* / cancel，保留其他（type 等）
+  // cancelled === undefined 時不動 cancel 狀態（caller 沒指定就保留現狀）
+  buildIssueLabels(currentLabels, { status, urgency, cancelled }) {
+    const hadCancel = (currentLabels || []).some(l => (typeof l === 'string' ? l : l.name) === 'cancel');
     const out = (currentLabels || [])
       .map(l => typeof l === 'string' ? l : l.name)
-      .filter(n => !n.startsWith('status:') && !n.startsWith('priority:'));
+      .filter(n => !n.startsWith('status:') && !n.startsWith('priority:') && n !== 'cancel');
     if (status) {
       out.push(`status:${status}`);
     }
     if (urgency) {
       out.push(`priority:${urgency.toLowerCase()}`);
+    }
+    const finalCancel = cancelled === undefined ? hadCancel : !!cancelled;
+    if (finalCancel) {
+      out.push('cancel');
     }
     return Array.from(new Set(out));
   }
@@ -390,12 +395,14 @@ class ProjectManager {
           (i.labels || []).some(l => (typeof l === 'string' ? l : l.name) === 'init')
         );
         if (!hasInit) {
-          await this.github.createIssue(
+          // 建立後直接關閉 → state=closed 在新語義下等於 Done
+          const created = await this.github.createIssue(
             project.owner, project.repo,
             t('init.issueAutoTitle'),
             t('init.issueAutoBody'),
-            ['init', 'status:done']
+            ['init']
           );
+          await this.github.updateIssue(project.owner, project.repo, created.number, { state: 'closed' });
         }
         // 一次同步全部 issues（含剛建立的 init 或既有的 init），用標準 sync 邏輯解析 labels/body
         const refreshed = hasInit ? existingIssues : await this.github.getIssues(project.owner, project.repo);
@@ -598,7 +605,8 @@ class ProjectManager {
     btn.disabled = false;
     btn.textContent = t('issue.add.create');
   }
-  // 回傳 null 表示找不到對應 PR，呼叫方應保留使用者手動設定的狀態，不應覆寫
+  // 從對應 PR 推算 status（只給 open issue 用）。回傳 null 表示找不到對應 PR 不覆寫
+  // PR merged 後 GitHub 自動關 issue，state=closed 即等於 Done，不再從這裡寫 status:done
   computeIssueStatus(branchName, prs) {
     if (!branchName) {
       return null;
@@ -606,9 +614,6 @@ class ProjectManager {
     const pr = prs.find(p => p.head.ref === branchName);
     if (!pr) {
       return null;
-    }
-    if (pr.merged_at) {
-      return 'done';
     }
     if (pr.state === 'open' && pr.draft) {
       return 'process';
@@ -671,12 +676,13 @@ class ProjectManager {
         { key: 'process', label: t('column.process') },
         { key: 'review', label: t('column.review') },
         { key: 'done', label: t('column.done') },
-        { key: 'closed', label: t('column.closed') }
+        { key: 'cancel', label: t('column.cancel') }
       ];
-      const grouped = { todo: [], process: [], review: [], done: [], closed: [], other: [] };
+      const grouped = { todo: [], process: [], review: [], done: [], cancel: [], other: [] };
       issues.forEach(issue => {
         if (issue.state === 'closed') {
-          grouped.closed.push(issue);
+          // closed + cancel label → Cancel；closed 無 cancel → Done
+          grouped[issue.cancelled ? 'cancel' : 'done'].push(issue);
         } else {
           const key = issue.status && grouped[issue.status] !== undefined ? issue.status : 'other';
           grouped[key].push(issue);
@@ -684,7 +690,7 @@ class ProjectManager {
       });
       const hasOther = grouped.other.length > 0;
       const allColumns = hasOther ? [...columns, { key: 'other', label: t('column.other') }] : columns;
-      const colDotClass = { todo: 'dot-todo', process: 'dot-process', review: 'dot-review', done: 'dot-done', closed: 'dot-closed', other: 'dot-closed' };
+      const colDotClass = { todo: 'dot-todo', process: 'dot-process', review: 'dot-review', done: 'dot-done', cancel: 'dot-closed', other: 'dot-closed' };
       container.innerHTML = `<div class="issues-grid">` +
         allColumns.map(col => `<div class="issues-column">
           <div class="issues-column-header">
@@ -752,7 +758,8 @@ class ProjectManager {
         await this.storage.patchIssue(cachedIssue.id, { state: issue.state });
         needsRerender = true;
       }
-      if (prs && branchName) {
+      // 自動 status 只給 open issue 用（closed → Done/Cancel 已由 state 決定）
+      if (prs && branchName && issue.state === 'open') {
         const autoStatus = this.computeIssueStatus(branchName, prs);
         if (autoStatus !== null && autoStatus !== status) {
           status = autoStatus;
@@ -924,8 +931,7 @@ class ProjectManager {
       <div id="issue-urgency-dropdown-menu" style="display: none; position: absolute; top: calc(100% + 4px); left: 0; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 4px 16px rgba(0,0,0,0.15); z-index: 250; overflow: hidden; min-width: 110px;"></div>
     </div>`;
     document.getElementById('issue-detail-meta').innerHTML = `${labels}${statusDropdown}${urgencyDropdown}${branchPart}${linkBranchBtn}`;
-    document.getElementById('issue-detail-toggle-btn').textContent =
-      issue.state === 'open' ? t('issue.detail.markClosed') : t('issue.detail.reopen');
+    this.renderStateActions(issue);
     if (issue.branchName) {
       document.getElementById('issue-status-dropdown-btn').addEventListener('click', (e) => {
         e.stopPropagation();
@@ -936,8 +942,7 @@ class ProjectManager {
       const statuses = [
         { key: 'todo', label: 'Todo' },
         { key: 'process', label: 'In Progress' },
-        { key: 'review', label: 'In Review' },
-        { key: 'done', label: 'Done' }
+        { key: 'review', label: 'In Review' }
       ];
       const statusMenu = document.getElementById('issue-status-dropdown-menu');
       statusMenu.innerHTML = statuses.map(s =>
@@ -1048,6 +1053,7 @@ class ProjectManager {
       state: 'state' in draft ? draft.state : issue.state,
       status: 'status' in draft ? draft.status : issue.status,
       urgency: 'urgency' in draft ? draft.urgency : issue.urgency,
+      cancelled: 'cancelled' in draft ? draft.cancelled : !!issue.cancelled,
       branchName
     };
   }
@@ -1095,10 +1101,11 @@ class ProjectManager {
       const branchName = 'branchName' in draft ? draft.branchName : issue.branchName;
       patch.body = this.buildIssueBody(displayBody, branchName);
     }
-    const labelsChanged = 'status' in draft || 'urgency' in draft;
+    const labelsChanged = 'status' in draft || 'urgency' in draft || 'cancelled' in draft;
     const finalStatus = 'status' in draft ? draft.status : issue.status;
     const finalUrgency = 'urgency' in draft ? draft.urgency : issue.urgency;
-    const newLabels = labelsChanged ? this.buildIssueLabels(issue.labels, { status: finalStatus, urgency: finalUrgency }) : null;
+    const finalCancelled = 'cancelled' in draft ? draft.cancelled : !!issue.cancelled;
+    const newLabels = labelsChanged ? this.buildIssueLabels(issue.labels, { status: finalStatus, urgency: finalUrgency, cancelled: finalCancelled }) : null;
     try {
       let updatedIssue = null;
       if (Object.keys(patch).length > 0) {
@@ -1130,6 +1137,9 @@ class ProjectManager {
         }
         if ('branchName' in draft) {
           localPatch.branchName = draft.branchName;
+        }
+        if ('cancelled' in draft) {
+          localPatch.cancelled = draft.cancelled;
         }
         if (Object.keys(localPatch).length > 0) {
           await this.storage.patchIssue(match.id, localPatch);
@@ -1254,17 +1264,53 @@ class ProjectManager {
       dot.className = `status-dot ${this.statusDotClass(newStatus)}`;
     }
   }
-  // 在 GitHub 切換 issue 的開啟/關閉狀態
-  // 切換 issue 狀態到 draft（open ↔ closed）
-  toggleIssueState() {
+  // 渲染 state 操作按鈕區（依 state 顯示不同按鈕組）
+  renderStateActions(issue) {
+    const container = document.getElementById('issue-detail-state-actions');
+    if (!container) {
+      return;
+    }
+    if (issue.state === 'open') {
+      container.innerHTML = `
+        <button id="issue-mark-done-btn" class="secondary" style="font-size: 12px; padding: 4px 10px;">${t('issue.detail.markDone')}</button>
+        <button id="issue-mark-cancel-btn" class="secondary" style="font-size: 12px; padding: 4px 10px;">${t('issue.detail.markCancel')}</button>
+      `;
+      container.querySelector('#issue-mark-done-btn').addEventListener('click', () => this.markDone());
+      container.querySelector('#issue-mark-cancel-btn').addEventListener('click', () => this.markCancelled());
+    } else {
+      container.innerHTML = `
+        <button id="issue-reopen-btn" class="secondary" style="font-size: 12px; padding: 4px 10px;">${t('issue.detail.reopen')}</button>
+      `;
+      container.querySelector('#issue-reopen-btn').addEventListener('click', () => this.reopenIssue());
+    }
+  }
+  // 標記為完成：closed state，無 cancel label
+  markDone() {
     if (!this._detailIssue) {
       return;
     }
-    const merged = this.mergedDetailIssue();
-    const newState = merged.state === 'open' ? 'closed' : 'open';
-    this._detailDraft.state = newState;
-    document.getElementById('issue-detail-toggle-btn').textContent =
-      newState === 'open' ? t('issue.detail.markClosed') : t('issue.detail.reopen');
+    this._detailDraft.state = 'closed';
+    this._detailDraft.cancelled = false;
+    this.refreshDetailFromDraft();
+  }
+  // 標記為取消：closed state + cancel label
+  markCancelled() {
+    if (!this._detailIssue) {
+      return;
+    }
+    this._detailDraft.state = 'closed';
+    this._detailDraft.cancelled = true;
+    this.refreshDetailFromDraft();
+  }
+  // 重新開啟：state 回 open、清掉 cancel、status 重設為 todo
+  reopenIssue() {
+    if (!this._detailIssue) {
+      return;
+    }
+    this._detailDraft.state = 'open';
+    this._detailDraft.cancelled = false;
+    this._detailDraft.status = 'todo';
+    this.refreshDetailFromDraft();
   }
   // 開啟刪除 issue 確認 modal
   openDeleteIssueModal() {
@@ -1353,7 +1399,7 @@ class ProjectManager {
       await this.storage.saveProjectIssues(this.activeProjectId, issues);
       const cached = await this.storage.getIssuesByProject(this.activeProjectId);
       for (const ci of cached) {
-        if (!ci.branchName) {
+        if (!ci.branchName || ci.state !== 'open') {
           continue;
         }
         const autoStatus = this.computeIssueStatus(ci.branchName, prs);

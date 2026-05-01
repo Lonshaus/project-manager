@@ -73,18 +73,28 @@ class LocalStorage {
       req.onerror = () => reject(req.error);
     });
   }
-  // 從 issue 物件解析 status / urgency / branchName：labels (status:* / priority:*) + body 隱藏 metadata
+  // 從 issue 物件解析 status / urgency / branchName / cancelled：
+  // - status:* 只接受 todo / process / review（done 已改由 state 判定）
+  // - cancelled = 是否帶 `cancel` label（決定 closed issue 屬於 Done 還是 Cancel 欄）
+  // - branchName 從 body 隱藏 pm-meta 註解解析
   static parseIssueMetadata(issue) {
     let status = null;
     let urgency = null;
     let branchName = null;
+    let cancelled = false;
+    const validStatus = new Set(['todo', 'process', 'review']);
     const urgencyMap = { low: 'Low', medium: 'Medium', high: 'High', urgent: 'Urgent' };
     for (const label of (issue.labels || [])) {
       const name = typeof label === 'string' ? label : label.name;
       if (name.startsWith('status:')) {
-        status = name.slice(7);
+        const s = name.slice(7);
+        if (validStatus.has(s)) {
+          status = s;
+        }
       } else if (name.startsWith('priority:')) {
         urgency = urgencyMap[name.slice(9)] || null;
+      } else if (name === 'cancel') {
+        cancelled = true;
       }
     }
     if (issue.body) {
@@ -100,7 +110,7 @@ class LocalStorage {
         }
       }
     }
-    return { status, urgency, branchName };
+    return { status, urgency, branchName, cancelled };
   }
   // 用 GitHub 最新資料覆寫指定專案的所有 issues，並從 labels / body 解析元資料
   async saveProjectIssues(projectId, issues) {
@@ -113,7 +123,8 @@ class LocalStorage {
       const merged = {
         branchName: parsed.branchName || null,
         status: parsed.status || null,
-        urgency: parsed.urgency || null
+        urgency: parsed.urgency || null,
+        cancelled: parsed.cancelled
       };
       // issue.id 只在單一 repo 內唯一，加上 projectId 避免跨 repo 碰撞
       store.put({ ...issue, id: `${projectId}_${issue.id}`, projectId, ...merged });
