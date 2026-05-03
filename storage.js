@@ -73,17 +73,19 @@ class LocalStorage {
       req.onerror = () => reject(req.error);
     });
   }
-  // 從 issue 物件解析 status / urgency / branchName / cancelled / linkedPRs：
+  // 從 issue 物件解析 status / urgency / branchName / cancelled / linkedPRs / subIssuesSummary：
   // - status:* 只接受 todo / process / review（done 已改由 state 判定）
   // - cancelled = 是否帶 `cancel` label（決定 closed issue 屬於 Done 還是 Cancel 欄）
   // - branchName 從 body 隱藏 pm-meta 註解解析（legacy）
   // - linkedPRs 從 pm-meta 解析手動連結的 PR 編號陣列
+  // - subIssuesSummary 直接取 GitHub issue 物件上的 sub_issues_summary
   static parseIssueMetadata(issue) {
     let status = null;
     let urgency = null;
     let branchName = null;
     let cancelled = false;
     let linkedPRs = [];
+    let subIssuesSummary = issue.sub_issues_summary || null;
     const validStatus = new Set(['todo', 'process', 'review']);
     const urgencyMap = { low: 'Low', medium: 'Medium', high: 'High', urgent: 'Urgent' };
     for (const label of (issue.labels || [])) {
@@ -115,7 +117,7 @@ class LocalStorage {
         }
       }
     }
-    return { status, urgency, branchName, cancelled, linkedPRs };
+    return { status, urgency, branchName, cancelled, linkedPRs, subIssuesSummary };
   }
   // 用 GitHub 最新資料覆寫指定專案的所有 issues，並從 labels / body 解析元資料
   async saveProjectIssues(projectId, issues) {
@@ -130,7 +132,10 @@ class LocalStorage {
         status: parsed.status || null,
         urgency: parsed.urgency || null,
         cancelled: parsed.cancelled,
-        linkedPRs: parsed.linkedPRs
+        linkedPRs: parsed.linkedPRs,
+        subIssuesSummary: parsed.subIssuesSummary,
+        // parentNumber 由 loadSubIssueGraph 之後另外回填
+        parentNumber: null
       };
       // issue.id 只在單一 repo 內唯一，加上 projectId 避免跨 repo 碰撞
       store.put({ ...issue, id: `${projectId}_${issue.id}`, projectId, ...merged });
