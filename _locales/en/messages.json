@@ -1,0 +1,14 @@
+{
+  "extName": {
+    "message": "Project Manager",
+    "description": "Extension name shown in Chrome toolbar and Web Store."
+  },
+  "extDescription": {
+    "message": "Lightweight GitHub issue project manager with a five-column board, native sub-issues, and automatic PR↔issue linking.",
+    "description": "Short manifest description (≤132 chars)."
+  },
+  "actionTitle": {
+    "message": "Project Manager",
+    "description": "Tooltip shown when hovering the extension toolbar icon."
+  }
+}
