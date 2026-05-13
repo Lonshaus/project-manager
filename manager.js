@@ -170,6 +170,7 @@ class ProjectManager {
     const menu = document.getElementById('project-dropdown-menu');
     const active = this.projects.find(p => p.id === this.activeProjectId);
     label.textContent = active ? active.name : t('app.selectProject');
+    document.title = active ? `Project Manager - ${active.name}` : 'Project Manager';
     const projectItems = this.projects.map(p => {
       const item = document.createElement('div');
       item.className = `dropdown-item${p.id === this.activeProjectId ? ' active' : ''}`;
