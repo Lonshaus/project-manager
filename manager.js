@@ -889,8 +889,9 @@ class ProjectManager {
           try {
             const updated = await this.github.updateIssue(project.owner, project.repo, issueNumber, { state: 'closed' });
             issue.state = updated.state;
+            issue.closed_at = updated.closed_at;
             if (cachedIssue) {
-              await this.storage.patchIssue(cachedIssue.id, { state: 'closed' });
+              await this.storage.patchIssue(cachedIssue.id, { state: 'closed', closed_at: updated.closed_at });
             }
             needsRerender = true;
           } catch (e) {
@@ -1843,8 +1844,8 @@ class ProjectManager {
         if (autoStatus === 'all-closed') {
           // 所有 linked PR 都關了 → 自動關 issue（→ Done）
           try {
-            await this.github.updateIssue(project.owner, project.repo, ci.number, { state: 'closed' });
-            await this.storage.patchIssue(ci.id, { state: 'closed' });
+            const updated = await this.github.updateIssue(project.owner, project.repo, ci.number, { state: 'closed' });
+            await this.storage.patchIssue(ci.id, { state: 'closed', closed_at: updated.closed_at });
           } catch (e) {
             // 失敗就保留 open
           }
