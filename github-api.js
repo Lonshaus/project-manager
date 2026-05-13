@@ -9,6 +9,7 @@ class GitHubAPI {
     const response = await fetch(
       `${this.baseURL}/repos/${owner}/${repo}/issues/${issueNumber}`,
       {
+        cache: 'no-store',
         headers: {
           'Authorization': `token ${this.token}`,
           'Accept': 'application/vnd.github.v3+json'
@@ -25,6 +26,7 @@ class GitHubAPI {
     const response = await fetch(
       `${this.baseURL}/repos/${owner}/${repo}/issues?state=all&per_page=100`,
       {
+        cache: 'no-store',
         headers: {
           'Authorization': `token ${this.token}`,
           'Accept': 'application/vnd.github.v3+json'
@@ -78,6 +80,7 @@ class GitHubAPI {
     const response = await fetch(
       `${this.baseURL}/repos/${owner}/${repo}/issues/${issueNumber}/comments?per_page=100`,
       {
+        cache: 'no-store',
         headers: {
           'Authorization': `token ${this.token}`,
           'Accept': 'application/vnd.github.v3+json'
@@ -115,6 +118,7 @@ class GitHubAPI {
     const response = await fetch(
       `${this.baseURL}/repos/${owner}/${repo}/issues/${parentNumber}/sub_issues?per_page=100`,
       {
+        cache: 'no-store',
         headers: {
           'Authorization': `token ${this.token}`,
           'Accept': 'application/vnd.github.v3+json'
@@ -171,6 +175,7 @@ class GitHubAPI {
     const response = await fetch(
       `${this.baseURL}/repos/${owner}/${repo}/pulls?state=all&per_page=100`,
       {
+        cache: 'no-store',
         headers: {
           'Authorization': `token ${this.token}`,
           'Accept': 'application/vnd.github.v3+json'
