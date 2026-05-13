@@ -168,4 +168,5 @@ unzip -l .build/project-manager.zip | head -30
 | `RELEASE.md` | 本文件 | ❌ |
 | `CLAUDE.md` `.claude/` | 開發者規範與 agent 設定 | ❌ |
 | `README.md` | repo 介紹 | ❌（送審不從這讀） |
-| `icons/`（待補） | manifest 引用 | ✅ |
+| `icons/` | manifest 引用 | ✅ |
+| `screenshots/` | 商店預覽素材 | ❌ |
