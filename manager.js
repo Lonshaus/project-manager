@@ -1518,10 +1518,29 @@ class ProjectManager {
     const cached = await this.storage.getIssuesByProject(this.activeProjectId);
     this._cachedIssuesForDetail = cached;
     const children = cached.filter(c => c.parentNumber === issue.number);
+    const prs = this._detailPRs || [];
+    const owner = this._detailProject.owner;
+    const dotClassMap = { todo: 'dot-todo', process: 'dot-process', review: 'dot-review', done: 'dot-done', cancel: 'dot-closed' };
+    const computeChildDotClass = (c) => {
+      let key;
+      if (c.state === 'closed') {
+        key = c.cancelled ? 'cancel' : 'done';
+      } else {
+        const auto = this.computeIssueStatus(c.number, c.branchName, prs, owner, c.linkedPRs);
+        if (auto === 'all-closed') {
+          key = 'done';
+        } else if (auto) {
+          key = auto;
+        } else {
+          key = c.status || 'todo';
+        }
+      }
+      return dotClassMap[key] || 'dot-closed';
+    };
     const rows = children.map(c => {
-      const stateClass = c.state === 'open' ? 'state-open' : 'state-closed';
-      return `<div class="sub-issue-row ${stateClass}" data-issue-number="${c.number}">
-        <span class="sub-issue-state"></span>
+      const dotClass = computeChildDotClass(c);
+      return `<div class="sub-issue-row" data-issue-number="${c.number}">
+        <span class="status-dot ${dotClass}"></span>
         <span class="sub-issue-link" data-issue-number="${c.number}">
           <span class="sub-issue-num">#${c.number}</span>
           <span class="sub-issue-title">${c.title}</span>
