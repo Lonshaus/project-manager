@@ -1,14 +1,16 @@
 {
   "manifest_version": 3,
-  "name": "Project Manager",
+  "default_locale": "en",
+  "name": "__MSG_extName__",
   "version": "0.1.0",
-  "description": "簡易的GitHub issue專案管理工具",
+  "description": "__MSG_extDescription__",
+  "author": "Lonshaus",
+  "homepage_url": "https://github.com/Lonshaus/project-manager",
   "permissions": [
-    "storage",
-    "tabs"
+    "storage"
   ],
   "action": {
-    "default_title": "Project Manager"
+    "default_title": "__MSG_actionTitle__"
   },
   "background": {
     "service_worker": "background.js"
