@@ -892,6 +892,7 @@ class ProjectManager {
             issue.closed_at = updated.closed_at;
             if (cachedIssue) {
               await this.storage.patchIssue(cachedIssue.id, { state: 'closed', closed_at: updated.closed_at });
+              await this._bumpParentSummaryAfterAutoClose(cachedIssue);
             }
             needsRerender = true;
           } catch (e) {
@@ -1798,6 +1799,32 @@ class ProjectManager {
     btn.disabled = false;
     btn.style.opacity = '';
   }
+  // Auto-close 觸發後同步 parent cache 的 sub_issues_summary，避免要等下一次 refresh 才更新進度條
+  // knownCached：refresh 流程已有 cached 陣列時直接重用，順便 mutate 該 entry 讓 loop 後續迭代看到新值
+  async _bumpParentSummaryAfterAutoClose(closedIssue, knownCached) {
+    if (!closedIssue || !closedIssue.parentNumber) {
+      return;
+    }
+    let parentCi;
+    if (knownCached) {
+      parentCi = knownCached.find(c => c.number === closedIssue.parentNumber);
+    } else {
+      const all = await this.storage.getIssuesByProject(this.activeProjectId);
+      parentCi = all.find(c => c.number === closedIssue.parentNumber);
+    }
+    if (!parentCi || !parentCi.subIssuesSummary) {
+      return;
+    }
+    const s = parentCi.subIssuesSummary;
+    const completed = s.completed + 1;
+    const newSummary = {
+      total: s.total,
+      completed,
+      percent_completed: s.total > 0 ? Math.round((completed / s.total) * 100) : 0
+    };
+    await this.storage.patchIssue(parentCi.id, { subIssuesSummary: newSummary });
+    parentCi.subIssuesSummary = newSummary;
+  }
   // 從 GitHub 同步最新 issues，並依 PR 狀態自動更新進度
   // 對每個有 sub_issues 的 parent 查 sub-issues 列表，把 child→parent 的對映回填到本地快取
   async loadSubIssueGraph(project) {
@@ -1846,6 +1873,7 @@ class ProjectManager {
           try {
             const updated = await this.github.updateIssue(project.owner, project.repo, ci.number, { state: 'closed' });
             await this.storage.patchIssue(ci.id, { state: 'closed', closed_at: updated.closed_at });
+            await this._bumpParentSummaryAfterAutoClose(ci, cached);
           } catch (e) {
             // 失敗就保留 open
           }
