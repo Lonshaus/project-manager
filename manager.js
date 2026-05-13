@@ -15,6 +15,14 @@ class ProjectManager {
     this.configureMarkdown();
     new SettingsPanel();
     this.setupEventListeners();
+    chrome.storage.onChanged.addListener((changes, areaName) => {
+      if (areaName !== 'sync') {
+        return;
+      }
+      if (changes.githubToken || changes.owner) {
+        this.reload();
+      }
+    });
     await this.reload();
     if (new URLSearchParams(window.location.search).get('settings') === 'open') {
       document.getElementById('settings-btn').click();
