@@ -167,7 +167,7 @@ const I18N_STRINGS = {
   'zh-TW': {
     'app.openManager': '開啟專案管理',
     'app.settings': '設定',
-    'app.refresh': '重整',
+    'app.refresh': '重新整理',
     'app.addIssue': '＋ 新增 Issue',
     'app.addProject': '＋ 新增專案',
     'app.removeProject': '移除此專案',
@@ -266,7 +266,7 @@ const I18N_STRINGS = {
     'empty.noToken': '尚未設定 GitHub Token，請點右上角「設定」',
     'empty.noProject': '還沒有任何專案，點擊下拉選單新增',
     'empty.selectProject': '請先選擇或新增專案',
-    'empty.noIssues': '暫無 issues，點擊「重整」來同步，或點「＋ 新增 Issue」',
+    'empty.noIssues': '暫無 issues，點擊「重新整理」來同步，或點「＋ 新增 Issue」',
     'msg.tokenRequired': '請先在設定中輸入 GitHub Token',
     'msg.usernameRequired': '請先在設定中填寫 GitHub Username',
     'msg.repoNotFound': '找不到 repo「{name}」，請確認名稱與權限',
