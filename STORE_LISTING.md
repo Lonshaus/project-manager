@@ -155,7 +155,15 @@ https://github.com/Lonshaus/project-manager
 
 ---
 
-## 7. Privacy policy 全文（建議貼到 GitHub Pages 或 repo 公開頁）
+## 7. Privacy policy
+
+**送審表單 Privacy policy URL 欄位填這個**：
+
+```
+https://lonshaus.github.io/project-manager/privacy
+```
+
+頁面內容已部署到上述 URL，原始碼位於 `docs/privacy.md`。以下為頁面全文（供查閱備份用）：
 
 ```markdown
 # Privacy Policy — Project Manager (Chrome Extension)
